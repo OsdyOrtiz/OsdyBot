@@ -70,6 +70,25 @@ public class TraitEvolutionTests
     }
 
     [Fact]
+    public void A_burst_across_a_window_boundary_is_capped_at_twice_the_budget()
+    {
+        var trait = TraitEvolution.Apply(Trait(0.40), 1, 1, Start, Bounds, Learning).Trait;
+        var anchor = trait.BudgetWindowStart;
+        double moved = 0;
+        var at = anchor + Learning.BudgetWindow - TimeSpan.FromMinutes(5);
+        for (var i = 0; i < 200; i++, at += TimeSpan.FromSeconds(5))
+        {
+            var update = TraitEvolution.Apply(trait, 1, 1, at, Bounds, Learning);
+            moved += Math.Abs(update.Delta);
+            trait = update.Trait;
+        }
+
+        // Documented worst case of the fixed window (docs/personality-model.md, property 3).
+        Assert.True(moved <= (2 * Learning.BudgetPerWindow) + 1e-9, $"moved {moved}");
+        Assert.True(moved > Learning.BudgetPerWindow, "the fixed window allows more than one budget at a boundary");
+    }
+
+    [Fact]
     public void Thousands_of_experiences_over_a_year_keep_the_trait_within_bounds_and_monotone()
     {
         var trait = Trait(0.40);

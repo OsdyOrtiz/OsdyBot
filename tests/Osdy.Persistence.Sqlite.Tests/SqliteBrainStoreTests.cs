@@ -123,11 +123,8 @@ public sealed class SqliteBrainStoreTests : IDisposable
     [Fact]
     public void A_newer_schema_version_is_refused_instead_of_being_overwritten()
     {
-        using (var store = new SqliteBrainStore(DbPath))
-        {
-            Assert.Null(store.Load());
-        }
-
+        // A plain (non-WAL) SQLite file written by some newer version of the app.
+        Directory.CreateDirectory(Path.GetDirectoryName(DbPath)!);
         using (var connection = new SqliteConnection($"Data Source={DbPath}"))
         {
             connection.Open();
@@ -137,7 +134,12 @@ public sealed class SqliteBrainStoreTests : IDisposable
         }
 
         SqliteConnection.ClearAllPools();
+        var before = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(DbPath)));
         var error = Assert.Throws<InvalidOperationException>(() => new SqliteBrainStore(DbPath));
+        SqliteConnection.ClearAllPools();
+        var after = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(DbPath)));
+
         Assert.Contains("schema version 99", error.Message, StringComparison.Ordinal);
+        Assert.Equal(before, after);
     }
 }

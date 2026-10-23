@@ -162,6 +162,18 @@ public sealed class CliAppTests : IDisposable
         Assert.StartsWith("[ERROR] No existe la base de datos", missingDb.Error, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task A_file_that_is_not_a_database_is_reported_instead_of_crashing()
+    {
+        var junk = Write("junk.db", "this is not sqlite, just text that is long enough to have a header....");
+
+        var result = await Run("status", "--db", junk);
+
+        Assert.Equal(CliApp.Failure, result.ExitCode);
+        Assert.StartsWith("[ERROR] ", result.Error, StringComparison.Ordinal);
+        Assert.Contains("not a database", result.Error, StringComparison.Ordinal);
+    }
+
     private string Write(string name, string content)
     {
         var path = Path.Combine(_directory, name);

@@ -9,7 +9,7 @@
 | 003 | **Deterministic step function** + single-consumer `Channel` loop | Replayable, lock-free, testable without waiting | Multi-threaded handlers with locks, Rx pipelines, event bus libraries |
 | 004 | **Ordered decision rules** with explicit reasons | Simple to explain and test; first match wins | Behavior trees, GOAP, utility AI (candidate for v0.3), reinforcement learning |
 | 005 | **SQLite via Microsoft.Data.Sqlite and plain SQL**, schema version in `PRAGMA user_version` | Small dependency, portable file, no ORM startup cost on embedded hardware | EF Core (heavier, migrations machinery not needed yet), LiteDB, JSON files (no transactions) |
-| 006 | **Bounded learning**: soft headroom + per-experience cap + rolling budget + change log | Gradual, bounded, explainable, reversible | Random drift, unbounded moving averages, neural networks |
+| 006 | **Bounded learning**: soft headroom + per-experience cap + window budget + change log | Gradual, bounded, explainable, reversible | Random drift, unbounded moving averages, neural networks |
 | 007 | **BCL `TimeProvider`** for time; time passed into the brain explicitly | No custom clock abstraction; fake time in tests | Custom `IClock`, wall-clock reads inside rules |
 | 008 | Console output in Spanish following the brief's example; code and docs in English | The example output is part of the requirement; artifacts default to English | Fully English console output |
 | 009 | **Events (facts) and experiences (interpretations) in separate tables** | Re-interpretation later without touching facts; privacy controls per layer | Single "memories" table |
@@ -52,3 +52,4 @@
 | P5 | First LLM provider and local-model fallback | v0.4 |
 | P6 | Vision/audio stack for perception adapters | v0.5 |
 | P7 | Exact target hardware | v0.6 |
+| P8 | Sliding (instead of fixed) trait budget window, removing the 2× boundary burst | v0.2 |

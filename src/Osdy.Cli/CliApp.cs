@@ -68,7 +68,8 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
         {
             return UsageError(e.Message);
         }
-        catch (Exception e) when (e is IOException or FormatException or JsonException or InvalidOperationException or UnauthorizedAccessException)
+        catch (Exception e) when (e is IOException or FormatException or JsonException or InvalidOperationException
+                                       or UnauthorizedAccessException or System.Data.Common.DbException)
         {
             await error.WriteLineAsync($"[ERROR] {e.Message}").ConfigureAwait(false);
             return Failure;

@@ -9,7 +9,7 @@ v0.1 runs on a regular computer with simulated events: no hardware, no LLM, no I
 Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download).
 
 ```bash
-dotnet test                                                        # 106 tests: unit, simulation, SQLite, CLI
+dotnet test                                                        # 108 tests: unit, simulation, SQLite, CLI
 dotnet run --project src/Osdy.Cli -- simulate scenarios/first-meeting.txt
 ```
 

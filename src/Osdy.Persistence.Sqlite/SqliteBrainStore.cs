@@ -268,22 +268,23 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
 
     private void Initialize()
     {
+        // Check the version before any write (including the journal mode) so a refused file stays untouched.
+        using var versionCommand = Command("PRAGMA user_version;");
+        var version = Convert.ToInt32(versionCommand.ExecuteScalar(), CultureInfo.InvariantCulture);
+        if (version != 0 && version != Schema.Version)
+        {
+            throw new InvalidOperationException(
+                $"Database schema version {version} is not supported (expected {Schema.Version}). Refusing to open it.");
+        }
+
         using (var wal = Command("PRAGMA journal_mode = WAL;"))
         {
             wal.ExecuteNonQuery();
         }
 
-        using var versionCommand = Command("PRAGMA user_version;");
-        var version = Convert.ToInt32(versionCommand.ExecuteScalar(), CultureInfo.InvariantCulture);
         if (version == Schema.Version)
         {
             return;
-        }
-
-        if (version != 0)
-        {
-            throw new InvalidOperationException(
-                $"Database schema version {version} is not supported (expected {Schema.Version}). Refusing to open it.");
         }
 
         using var transaction = _connection.BeginTransaction();
