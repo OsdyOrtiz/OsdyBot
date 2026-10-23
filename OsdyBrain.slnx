@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Osdy.Cli/Osdy.Cli.csproj" />
+    <Project Path="src/Osdy.Core/Osdy.Core.csproj" />
+    <Project Path="src/Osdy.Persistence.Sqlite/Osdy.Persistence.Sqlite.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Osdy.Core.Tests/Osdy.Core.Tests.csproj" />
+    <Project Path="tests/Osdy.Persistence.Sqlite.Tests/Osdy.Persistence.Sqlite.Tests.csproj" />
+  </Folder>
+</Solution>
