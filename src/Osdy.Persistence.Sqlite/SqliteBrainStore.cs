@@ -50,7 +50,14 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
         var connection = Open(path, SqliteOpenMode.ReadOnly);
         try
         {
-            if (ReadVersion(connection) == 0)
+            var version = ReadVersion(connection);
+            if (version == 1)
+            {
+                throw new InvalidOperationException(
+                    "Database schema version 1 requires migration to version 2. Open it read-write first; read-only access never migrates.");
+            }
+
+            if (version == 0)
             {
                 connection.Dispose();
                 return null;
@@ -82,7 +89,7 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
             Time(identityReader.GetString(2)));
 
         var traits = new List<TraitState>();
-        using (var traitsCommand = Command("SELECT kind, value, baseline, budget_window_start, budget_used FROM traits"))
+        using (var traitsCommand = Command("SELECT kind, value, baseline FROM traits"))
         using (var reader = traitsCommand.ExecuteReader())
         {
             while (reader.Read())
@@ -91,11 +98,7 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
                     Enum.Parse<TraitKind>(reader.GetString(0)),
                     reader.GetDouble(1),
                     reader.GetDouble(2),
-                    // Schema-v1 adapter: conservatively restore the aggregate at its latest change.
-                    // T2 replaces this with exact history from trait_changes and schema v2.
-                    reader.GetDouble(4) > 0
-                        ? Array.AsReadOnly<TraitBudgetEntry>([new(Time(reader.GetString(3)), reader.GetDouble(4))])
-                        : []));
+                    []));
             }
         }
 
@@ -115,7 +118,34 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
             OptionalTime(runtimeReader, 4),
             OptionalTime(runtimeReader, 5));
 
-        return new BrainSnapshot(identity, PersonalityProfile.Restore(traits), runtime);
+        // Storage does not own LearningOptions. Restore the recorded history up to the snapshot;
+        // Brain.Restore prunes it using the caller's BudgetWindow and this runtime timestamp.
+        var history = new Dictionary<TraitKind, List<TraitBudgetEntry>>();
+        using (var changesCommand = Command("SELECT trait, occurred_at, ABS(delta) FROM trait_changes ORDER BY seq"))
+        using (var reader = changesCommand.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                var occurredAt = Time(reader.GetString(1));
+                if (occurredAt > runtime.LastUpdatedAt)
+                {
+                    continue;
+                }
+                var kind = Enum.Parse<TraitKind>(reader.GetString(0));
+                if (!history.TryGetValue(kind, out var entries))
+                {
+                    entries = [];
+                    history.Add(kind, entries);
+                }
+                entries.Add(new TraitBudgetEntry(occurredAt, reader.GetDouble(2)));
+            }
+        }
+
+        var restored = traits.Select(trait => trait with
+        {
+            RecentChanges = history.TryGetValue(trait.Kind, out var entries) ? entries.AsReadOnly() : [],
+        });
+        return new BrainSnapshot(identity, PersonalityProfile.Restore(restored), runtime);
     }
 
     public void Commit(StepResult result)
@@ -133,18 +163,13 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
         {
             Execute(
                 """
-                INSERT INTO traits (kind, value, baseline, budget_window_start, budget_used)
-                VALUES ($kind, $value, $baseline, $start, $used)
-                ON CONFLICT (kind) DO UPDATE SET value = $value, baseline = $baseline,
-                    budget_window_start = $start, budget_used = $used
+                INSERT INTO traits (kind, value, baseline)
+                VALUES ($kind, $value, $baseline)
+                ON CONFLICT (kind) DO UPDATE SET value = $value, baseline = $baseline
                 """,
                 ("$kind", trait.Kind.ToString()),
                 ("$value", trait.Value),
-                ("$baseline", trait.Baseline),
-                ("$start", Text(trait.RecentChanges.Count == 0
-                    ? snapshot.Identity.CreatedAt
-                    : trait.RecentChanges.Max(change => change.OccurredAt))),
-                ("$used", trait.RecentChanges.Sum(change => change.Magnitude)));
+                ("$baseline", trait.Baseline));
         }
 
         var runtime = snapshot.Runtime;
@@ -311,7 +336,7 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
         }
 
         using var transaction = _connection.BeginTransaction();
-        Execute(Schema.Create);
+        Execute(version == 1 ? Schema.MigrateV1ToV2 : Schema.Create);
         Execute($"PRAGMA user_version = {Schema.Version};");
         transaction.Commit();
     }
@@ -330,7 +355,7 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
         using var command = connection.CreateCommand();
         command.CommandText = "PRAGMA user_version;";
         var version = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
-        if (version != 0 && version != Schema.Version)
+        if (version != 0 && version != 1 && version != Schema.Version)
         {
             throw new InvalidOperationException(
                 $"Database schema version {version} is not supported (expected {Schema.Version}). Refusing to open it.");

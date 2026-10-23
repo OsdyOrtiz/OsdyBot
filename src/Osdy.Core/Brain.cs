@@ -49,7 +49,17 @@ public sealed class Brain
     public static Brain Restore(BrainSnapshot snapshot, BrainOptions options, DecisionEngine? engine = null)
     {
         options.EnsureValid();
-        var personality = PersonalityProfile.Restore(snapshot.Personality.Traits, options.Personality);
+        var cutoff = snapshot.Runtime.LastUpdatedAt - options.Learning.BudgetWindow;
+        var traits = snapshot.Personality.Traits.Select(trait =>
+        {
+            var recent = trait.RecentChanges
+                .Where(change => change.OccurredAt > cutoff && change.OccurredAt <= snapshot.Runtime.LastUpdatedAt)
+                .ToArray();
+            return recent.Length == trait.RecentChanges.Count
+                ? trait
+                : trait with { RecentChanges = Array.AsReadOnly(recent) };
+        });
+        var personality = PersonalityProfile.Restore(traits, options.Personality);
         var runtime = snapshot.Runtime with { Energy = Math.Clamp(snapshot.Runtime.Energy, 0, 1) };
         return new Brain(options, snapshot with { Personality = personality, Runtime = runtime }, engine ?? DecisionEngine.Default);
     }

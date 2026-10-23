@@ -15,7 +15,7 @@ Test runner: `dotnet test` (xUnit). Rules: `CLAUDE.md` (invariants 2 and 7, Pers
 | ID | Specs | Route | Status | Commit |
 |----|-------|-------|--------|--------|
 | T1 | S1, S2, S4 (personality model) | worker (context backstop) | done — core sliding window + tests + personality doc. RED: boundary burst `moved 0.05500000000000005, budget 0.03`. GREEN: 13 focused; full suite 96 Core + 7 SQLite + 18 CLI; build 0 warnings/errors. | awaiting parent commit |
-| T2 | S3, S4 | worker (context backstop) | pending — schema v2, migration v1→v2, history rebuilt on load + tests + persistence doc. Risk: item 1 (migration of stored data) → own commit, independent verify | |
+| T2 | S3, S4 | worker (context backstop) | done — transactional schema v2 migration, exact history rebuilt from trait_changes and pruned by Brain.Restore with caller options; read-only v1 refused untouched with migration guidance; persistence doc + ADR-016 updated (roadmap has no P8/fixed-window mention). RED: migration expected version 2, got 1; restart expected 2 history entries, got 0; read-only v1 expected InvalidOperationException, none thrown. GREEN: each new test passed individually; 10 SQLite tests; full suite 96 Core + 10 SQLite + 18 CLI; build 0 warnings/errors. Triangulation: negative delta magnitude, exact expiry/custom-window pruning, row/value preservation, v1/99 unchanged hashes. Risk: item 1 (migration of stored data) → own commit, independent verify | awaiting parent commit |
 
 ## Log
 

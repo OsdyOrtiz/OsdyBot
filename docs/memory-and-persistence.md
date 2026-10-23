@@ -11,12 +11,11 @@
 
 Every experience stores context (state, action), importance, date, source and links to its event and decision. Trait changes link to their experience, which makes any adaptation explainable by a join.
 
-## SQLite schema (version 1)
+## SQLite schema (version 2)
 
 ```sql
 identity      (id TEXT PRIMARY KEY, name TEXT, created_at TEXT)
-traits        (kind TEXT PRIMARY KEY, value REAL, baseline REAL,
-               budget_window_start TEXT, budget_used REAL)
+traits        (kind TEXT PRIMARY KEY, value REAL, baseline REAL)
 runtime_state (id INTEGER PRIMARY KEY CHECK (id = 1), state TEXT, state_entered_at TEXT,
                energy REAL, last_updated_at TEXT, last_spontaneous_at TEXT, last_interaction_at TEXT)
 events        (seq INTEGER PRIMARY KEY, id TEXT UNIQUE, type TEXT, occurred_at TEXT, source TEXT)
@@ -30,9 +29,11 @@ trait_changes (seq INTEGER PRIMARY KEY, id TEXT UNIQUE, occurred_at TEXT, trait 
 
 - Enums are stored as names, timestamps as ISO 8601 round-trip strings, `reasons` as a JSON array.
 - `seq` gives a stable insertion order independent of clock precision.
-- Schema version lives in `PRAGMA user_version`. An unknown newer version refuses to open instead of corrupting data.
+- Schema version lives in `PRAGMA user_version`. Versions are checked before any write, including journal-mode changes; unknown newer versions are refused untouched.
+- Opening v1 read-write explicitly migrates to v2: both obsolete `traits.budget_window_start` and `traits.budget_used` columns are dropped and `user_version` is advanced in one transaction. All rows and remaining values are preserved.
+- `trait_changes` is the single source of truth for budget history. `Load()` rebuilds per-trait entries from `occurred_at` and `ABS(delta)` up to the stored runtime `last_updated_at`. Storage has no learning options, so it loads the recorded history; `Brain.Restore` retains only entries in `(last_updated_at - BudgetWindow, last_updated_at]` using the caller's options. Learning prunes again at each experience's time.
 - WAL journal mode for crash safety.
-- Inspection commands (`osdy status`, `osdy events export`) open the file read-only: they never create a schema, change the journal mode or write anything, even to an empty file.
+- Inspection commands (`osdy status`, `osdy events export`) open the file read-only: they never create a schema, change the journal mode or write anything, even to an empty file. A v1 file is refused with guidance to open it read-write first for migration; no legacy read path is maintained.
 
 ## Write strategy
 

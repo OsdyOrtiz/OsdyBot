@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using Osdy.Core;
 using Osdy.Core.Decisions;
 using Osdy.Core.Events;
+using Osdy.Core.Personality;
 using Osdy.Core.Runtime;
 using Osdy.Core.Simulation;
 using Osdy.Core.States;
@@ -25,6 +26,90 @@ public sealed class SqliteBrainStoreTests : IDisposable
     }
 
     [Fact]
+    public void A_v1_database_migrates_without_losing_any_rows_or_values()
+    {
+        CreateV1();
+        var before = StoredValues();
+
+        using var store = new SqliteBrainStore(DbPath);
+        using var connection = new SqliteConnection($"Data Source={DbPath};Pooling=False");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA user_version";
+        Assert.Equal(2L, command.ExecuteScalar());
+        command.CommandText = "SELECT name FROM pragma_table_info('traits')";
+        using (var reader = command.ExecuteReader())
+        {
+            var columns = new List<string>();
+            while (reader.Read())
+            {
+                columns.Add(reader.GetString(0));
+            }
+            Assert.Equal(["kind", "value", "baseline"], columns);
+        }
+
+        Assert.Equal(before, StoredValues());
+        var loaded = store.Load()!;
+        Assert.Equal("Legacy", loaded.Identity.Name);
+        Assert.Equal(0.7, loaded.Runtime.Energy);
+        Assert.Equal(T0.AddHours(1), loaded.Runtime.LastUpdatedAt);
+        Assert.Equal(0.495, loaded.Personality[TraitKind.Sociability].Value);
+        Assert.Equal(new TraitBudgetEntry(T0.AddMinutes(30), 0.005),
+            Assert.Single(loaded.Personality[TraitKind.Sociability].RecentChanges));
+        var shortWindow = Brain.Restore(loaded, new BrainOptions
+        {
+            Learning = new LearningOptions { BudgetWindow = TimeSpan.FromMinutes(30) },
+        });
+        Assert.Empty(shortWindow.Personality[TraitKind.Sociability].RecentChanges);
+        Assert.Equal(0.495, shortWindow.Personality[TraitKind.Sociability].Value);
+        Assert.Equal(new MemoryStats(1, 1, 1, 1), store.GetStats());
+        Assert.Equal("fixture", Assert.Single(store.GetEvents()).Source);
+        Assert.Equal("legacy reason", Assert.Single(Assert.Single(store.GetRecentDecisions(10)).Reasons));
+        Assert.Equal("legacy outcome", Assert.Single(store.GetRecentExperiences(10)).Outcome);
+        Assert.Equal(-0.005, Assert.Single(store.GetRecentTraitChanges(10)).Delta);
+    }
+
+    private void CreateV1()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(DbPath)!);
+        using var connection = new SqliteConnection($"Data Source={DbPath};Pooling=False");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = SchemaV1Fixture.Sql;
+        command.ExecuteNonQuery();
+        foreach (var kind in Enum.GetValues<TraitKind>())
+        {
+            command.CommandText = "INSERT INTO traits VALUES ($kind, $value, 0.5, '2026-01-01T08:00:00.0000000+00:00', 0.02)";
+            command.Parameters.Clear();
+            command.Parameters.AddWithValue("$kind", kind.ToString());
+            command.Parameters.AddWithValue("$value", kind == TraitKind.Sociability ? 0.495 : 0.5);
+            command.ExecuteNonQuery();
+        }
+    }
+
+    private List<string> StoredValues()
+    {
+        using var connection = new SqliteConnection($"Data Source={DbPath};Pooling=False");
+        connection.Open();
+        var rows = new List<string>();
+        foreach (var table in new[] { "identity", "traits", "runtime_state", "events", "decisions", "experiences", "trait_changes" })
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = table == "traits"
+                ? "SELECT kind, value, baseline FROM traits ORDER BY kind"
+                : $"SELECT * FROM {table} ORDER BY 1";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var values = new object[reader.FieldCount];
+                reader.GetValues(values);
+                rows.Add(table + System.Text.Json.JsonSerializer.Serialize(values));
+            }
+        }
+        return rows;
+    }
+
+    [Fact]
     public void A_new_database_is_empty_and_creates_its_directory()
     {
         using var store = new SqliteBrainStore(DbPath);
@@ -32,6 +117,49 @@ public sealed class SqliteBrainStoreTests : IDisposable
         Assert.Null(store.Load());
         Assert.Equal(new MemoryStats(0, 0, 0, 0), store.GetStats());
         Assert.True(File.Exists(DbPath));
+    }
+
+    [Fact]
+    public void Sliding_budget_survives_restart_and_releases_each_change_at_its_own_expiry()
+    {
+        var options = new BrainOptions
+        {
+            Learning = new LearningOptions
+            {
+                LearningRate = 1,
+                MaxStep = 0.005,
+                BudgetPerWindow = 0.01,
+                BudgetWindow = TimeSpan.FromHours(1),
+            },
+        };
+        double savedValue;
+        using (var store = new SqliteBrainStore(DbPath))
+        {
+            var brain = BrainBootstrap.Boot(store, options, T0).Brain;
+            foreach (var minute in new[] { 5, 20 })
+            {
+                var result = brain.Handle(BrainEvent.Create(EventType.PositiveInteraction, T0.AddMinutes(minute), "test"));
+                Assert.Equal(0.005, Assert.Single(result.TraitChanges, c => c.Trait == TraitKind.Sociability).Delta, 10);
+                store.Commit(result);
+            }
+            savedValue = brain.Personality[TraitKind.Sociability].Value;
+        }
+
+        using var reopened = new SqliteBrainStore(DbPath);
+        var restored = BrainBootstrap.Boot(reopened, options, T0.AddMinutes(25)).Brain;
+        Assert.Equal(2, restored.Personality[TraitKind.Sociability].RecentChanges.Count);
+        var capped = restored.Handle(BrainEvent.Create(EventType.PositiveInteraction, T0.AddMinutes(30), "test"));
+        reopened.Commit(capped);
+        Assert.NotNull(capped.Experience);
+        Assert.DoesNotContain(capped.TraitChanges, c => c.Trait == TraitKind.Sociability);
+        Assert.Equal(savedValue, restored.Personality[TraitKind.Sociability].Value);
+
+        var released = restored.Handle(BrainEvent.Create(EventType.PositiveInteraction, T0.AddMinutes(65), "test"));
+        reopened.Commit(released);
+        Assert.Equal(0.005, Assert.Single(released.TraitChanges, c => c.Trait == TraitKind.Sociability).Delta, 10);
+        Assert.Equal(savedValue + 0.005, restored.Personality[TraitKind.Sociability].Value, 10);
+        Assert.Equal(new[] { T0.AddMinutes(20), T0.AddMinutes(65) },
+            restored.Personality[TraitKind.Sociability].RecentChanges.Select(c => c.OccurredAt));
     }
 
     [Fact]
@@ -156,6 +284,21 @@ public sealed class SqliteBrainStoreTests : IDisposable
     }
 
     [Fact]
+    public void Read_only_v1_is_refused_with_migration_guidance_and_unchanged_bytes()
+    {
+        CreateV1();
+        var before = System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(DbPath));
+
+        var error = Assert.Throws<InvalidOperationException>(() => SqliteBrainStore.OpenReadOnly(DbPath));
+        SqliteConnection.ClearAllPools();
+
+        Assert.Contains("schema version 1", error.Message, StringComparison.Ordinal);
+        Assert.Contains("read-write", error.Message, StringComparison.Ordinal);
+        Assert.Equal(before, System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(DbPath)));
+        Assert.Equal(["brain.db"], Directory.GetFiles(Path.GetDirectoryName(DbPath)!).Select(Path.GetFileName));
+    }
+
+    [Fact]
     public void A_newer_schema_version_is_refused_instead_of_being_overwritten()
     {
         // A plain (non-WAL) SQLite file written by some newer version of the app.
@@ -171,9 +314,11 @@ public sealed class SqliteBrainStoreTests : IDisposable
         SqliteConnection.ClearAllPools();
         var before = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(DbPath)));
         var error = Assert.Throws<InvalidOperationException>(() => new SqliteBrainStore(DbPath));
+        var readOnlyError = Assert.Throws<InvalidOperationException>(() => SqliteBrainStore.OpenReadOnly(DbPath));
         SqliteConnection.ClearAllPools();
         var after = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(DbPath)));
 
+        Assert.Contains("schema version 99", readOnlyError.Message, StringComparison.Ordinal);
         Assert.Contains("schema version 99", error.Message, StringComparison.Ordinal);
         Assert.Equal(before, after);
     }

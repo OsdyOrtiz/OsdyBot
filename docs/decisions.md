@@ -19,6 +19,7 @@
 | 013 | **Hand-written CLI argument parsing** in `CliApp`, testable with fake I/O and time | Four commands do not justify a dependency | System.CommandLine, Spectre.Console.Cli |
 | 014 | **JSON configuration** with defaults in code; unknown properties rejected | Typos in tuning files must fail loudly | Microsoft.Extensions.Configuration (silent on typos, more machinery) |
 | 015 | **Monotonic step time** (`max(input, LastUpdatedAt)`) and `run` refuses a database saved ahead of the clock | Decisions, experiences and trait changes stay in time order; a brain from a forward simulation must not run frozen | Stamping events at processing time (loses the observed time), freezing the brain until the clock catches up, `simulate --db` never persisting virtual time |
+| 016 | **Sliding trait budget window (P8)** and **schema v2** with explicit v1→v2 migration removing the old aggregate columns | Prevents the 2× boundary burst; `trait_changes` is the single source of truth for restart history. Read-only v1 access is refused with migration guidance, never migrated implicitly | Fixed windows; keep the unused columns; a second legacy read path |
 
 ## Risks
 
@@ -53,4 +54,3 @@
 | P5 | First LLM provider and local-model fallback | v0.4 |
 | P6 | Vision/audio stack for perception adapters | v0.5 |
 | P7 | Exact target hardware | v0.6 |
-| P8 | Sliding (instead of fixed) trait budget window, removing the 2× boundary burst | v0.2 |

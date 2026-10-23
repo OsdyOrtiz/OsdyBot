@@ -1,9 +1,14 @@
 namespace Osdy.Persistence.Sqlite;
 
-/// <summary>Schema version 1. See docs/memory-and-persistence.md.</summary>
+/// <summary>Schema version 2. See docs/memory-and-persistence.md.</summary>
 internal static class Schema
 {
-    public const int Version = 1;
+    public const int Version = 2;
+
+    public const string MigrateV1ToV2 = """
+        ALTER TABLE traits DROP COLUMN budget_window_start;
+        ALTER TABLE traits DROP COLUMN budget_used;
+        """;
 
     public const string Create = """
         CREATE TABLE identity (
@@ -15,9 +20,7 @@ internal static class Schema
         CREATE TABLE traits (
             kind TEXT PRIMARY KEY,
             value REAL NOT NULL,
-            baseline REAL NOT NULL,
-            budget_window_start TEXT NOT NULL,
-            budget_used REAL NOT NULL
+            baseline REAL NOT NULL
         );
 
         CREATE TABLE runtime_state (
