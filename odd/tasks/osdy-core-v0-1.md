@@ -30,8 +30,8 @@ Assumption A1: user-facing console tags stay as in the example; technical artifa
 | ID | Specs | Route | Status | Commit |
 |----|-------|-------|--------|--------|
 | T1 | S1, S15 | inline | done — structural readback (passive docs, no runnable RED) | `docs:` planning commit |
-| T2 | S3, S9, S13 | inline | pending | — |
-| T3 | S4, S5, S6, S7, S10 | inline | pending | — |
+| T2 | S3, S9, S13 | inline | done — RED: compile failure before implementation; GREEN 18/18 | `feat(personality)` 22fd5fb |
+| T3 | S4, S6, S7, S9, S10, S13 | inline | done — RED not observed (code written before tests); compensated with 2 mutation checks (budget removed → 3 fail; interaction tracking removed → 1 fail); GREEN 75/75 | `feat(core)` brain step commit |
 | T4 | S2, S8, S11 | inline | pending | — |
 | T5 | S5, S6, S12, S14, S15 | inline | pending | — |
 | T6 | all | delegated verifier (feature end) | pending | — |

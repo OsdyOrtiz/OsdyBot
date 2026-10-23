@@ -16,8 +16,10 @@ public sealed class PersonalityProfile
             kind => kind,
             kind => new TraitState(kind, options.Initial(kind), options.Initial(kind), now, 0)));
 
-    public static PersonalityProfile Restore(IEnumerable<TraitState> stored, PersonalityOptions options)
+    /// <summary>Rebuilds a profile from stored traits; with options, values are clamped into the current bounds.</summary>
+    public static PersonalityProfile Restore(IEnumerable<TraitState> stored, PersonalityOptions? options = null)
     {
+        options ??= new PersonalityOptions { TraitMin = 0, TraitMax = 1 };
         var byKind = stored.ToDictionary(t => t.Kind);
         var missing = Enum.GetValues<TraitKind>().Where(k => !byKind.ContainsKey(k)).ToList();
         if (missing.Count > 0)
