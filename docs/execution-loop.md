@@ -16,6 +16,8 @@ host: commit StepResult to IBrainStore (one transaction) → notify IBrainObserv
 
 Persist **before** notify: the outside world never sees an action whose cause was not saved.
 
+**Step time never goes backwards:** the brain uses `t = max(input time, LastUpdatedAt)`. An event posted just before a tick that was processed first is decided (and its experience and trait changes stamped) at the tick's time; the event itself keeps its observed `OccurredAt`. `osdy run` refuses a database whose last saved activity is later than the current time (left by `simulate --db`), because the live brain would stay frozen until the clock caught up.
+
 ## State machine
 
 ```mermaid

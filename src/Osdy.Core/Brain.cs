@@ -63,6 +63,7 @@ public sealed class Brain
     public StepResult Start(DateTimeOffset now)
     {
         var downtime = now - Runtime.LastUpdatedAt;
+        now = Monotonic(now);
         var energy = Energy.Advance(Runtime.Energy, BrainState.Resting, downtime, Options.Vitals);
         Runtime = Runtime with { Energy = energy, LastUpdatedAt = Max(now, Runtime.LastUpdatedAt) };
 
@@ -84,7 +85,7 @@ public sealed class Brain
 
     public StepResult Handle(BrainEvent evt)
     {
-        var now = evt.OccurredAt;
+        var now = Monotonic(evt.OccurredAt);
         AdvanceVitals(now);
         if (evt.IsInteraction)
         {
@@ -106,6 +107,7 @@ public sealed class Brain
 
     public StepResult Tick(DateTimeOffset now)
     {
+        now = Monotonic(now);
         AdvanceVitals(now);
         var decision = _engine.Decide(Context(now, null), DecisionTrigger.Tick);
         if (decision is not null)
@@ -149,6 +151,12 @@ public sealed class Brain
         Experience? experience,
         IReadOnlyList<TraitChange> changes) =>
         new(now, trigger, evt, decision, experience, changes, Snapshot);
+
+    /// <summary>
+    /// Step time never goes backwards: an input stamped before the last step (an event posted before a tick that was
+    /// processed first) is decided at the last step's time. The event itself keeps its observed time.
+    /// </summary>
+    private DateTimeOffset Monotonic(DateTimeOffset at) => Max(at, Runtime.LastUpdatedAt);
 
     private static DateTimeOffset Max(DateTimeOffset a, DateTimeOffset b) => a > b ? a : b;
 }

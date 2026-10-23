@@ -24,8 +24,8 @@ public static class LearningEngine
 
         var appraisal = options.Appraisals[kind.Value];
         return new Experience(
-            Guid.CreateVersion7(evt.OccurredAt),
-            evt.OccurredAt,
+            Guid.CreateVersion7(decision.OccurredAt),
+            decision.OccurredAt, // interpreted when decided; the event keeps its observed time
             evt.Id,
             decision.Id,
             kind.Value,

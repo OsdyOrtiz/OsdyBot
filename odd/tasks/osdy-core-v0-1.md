@@ -41,7 +41,7 @@ Assumption A1: user-facing console tags stay as in the example; technical artifa
 | T9 | S8, L5 | inline | done — RED: CS0117 + empty file grew to 65 536 bytes; GREEN 113/113 | see git log `fix(persistence)` |
 | T10 | S5, L5 | inline | done — RED: hang until the 30 s guard; GREEN 16/16 CLI, stable 10×, real binary run exit 0 | see git log `fix(cli)` |
 | T11 | S6, L5 | inline | done — RED: parser rejected `05.5`, format dropped `.25`; GREEN 116/116 | see git log `fix(simulation)` |
-| T12 | S6, S10, L5 | inline | pending — timestamps never go backwards (needs a decision) | |
+| T12 | S6, S10, L5 | inline | done — RED: decision at 08:00:09 < last step 08:00:10; run accepted a future DB; GREEN 118/118; differential simulate of both scenarios identical | see git log `fix(core)` |
 
 Route evidence: no Writer trigger (single sequential stream, no parallel disjoint units); parent writes inline. T6 is an independent verifier because the runner adds async ordering (Risk item 4).
 
@@ -54,3 +54,4 @@ Route evidence: no Writer trigger (single sequential stream, no parallel disjoin
 - L5: Deferred advisories for v0.2 backlog: status/export should open the DB read-only (an empty file gets a schema); `run` should stop reading input when the loop stops after repeated failures; timestamps can go backwards (event stamped at post vs tick at processing; simulate --db then run); `events export` drops trailing waits and sub-second offsets; Reload drops a custom DecisionEngine; boot after recovery prints `[STATE] Idle` twice.
 - L6: Next step — user review of the planning docs and v0.1; push/PR is the user's decision.
 - L7 (2026-10-23, user, verbatim): "ok podemos seguir" → chose "A: arreglar las deudas de v0.1" (the six L5 advisories) as T7–T12, one commit each.
+- L8 (2026-10-23, user decision for T12): "Clamp + run rechaza la base" — step time is `max(input, LastUpdatedAt)` (events keep their observed time); `run` exits 1 on a database saved ahead of the current time. Recorded as ADR-015.

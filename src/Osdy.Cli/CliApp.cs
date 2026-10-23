@@ -80,6 +80,15 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
     {
         var options = LoadOptions(command);
         using var store = new SqliteBrainStore(command.Database);
+        var now = time.GetUtcNow();
+        if (store.Load() is { } saved && saved.Runtime.LastUpdatedAt > now)
+        {
+            // A live brain cannot run before its own past: it would stay frozen until the clock caught up.
+            throw new InvalidOperationException(
+                $"La última actividad guardada en {command.Database} ({Utc(saved.Runtime.LastUpdatedAt)}) es posterior a la hora "
+                + $"actual ({Utc(now)}), probablemente por 'simulate --db'. Usá otra base para 'run' o esperá a esa hora.");
+        }
+
         var renderer = new ConsoleRenderer(output);
         renderer.Starting();
         var boot = BrainBootstrap.Boot(store, options, time.GetUtcNow());
@@ -252,6 +261,8 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
         output.WriteLine($"[EVENTS] {events.Count} eventos exportados a {path}");
         return Ok;
     }
+
+    private static string Utc(DateTimeOffset value) => value.ToString("u", CultureInfo.InvariantCulture);
 
     private static string Elapsed(TimeSpan value) =>
         value.ToString(value.Days > 0 ? @"d\.hh\:mm\:ss" : @"hh\:mm\:ss", CultureInfo.InvariantCulture);

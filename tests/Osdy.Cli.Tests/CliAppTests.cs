@@ -129,6 +129,23 @@ public sealed class CliAppTests : IDisposable
     }
 
     [Fact]
+    public async Task Run_refuses_a_database_saved_ahead_of_the_current_time()
+    {
+        await Run("simulate", Write("day.txt", "00:00:05 HumanPresenceDetected\n1.00:00:00 wait\n"), "--db", Db);
+        var before = await Run("status", "--db", Db);
+
+        var result = await Run(["run", "--db", Db], input: "h\nq\n");
+
+        Assert.Equal(CliApp.Failure, result.ExitCode);
+        Assert.Empty(result.Output);
+        Assert.Equal(
+            $"[ERROR] La última actividad guardada en {Db} (2026-01-02 08:00:00Z) es posterior a la hora actual "
+            + "(2026-01-01 08:00:00Z), probablemente por 'simulate --db'. Usá otra base para 'run' o esperá a esa hora.",
+            result.Error.TrimEnd());
+        Assert.Equal(before.Output, (await Run("status", "--db", Db)).Output);
+    }
+
+    [Fact]
     public async Task Boot_after_restart_recovery_prints_the_resumed_state_once()
     {
         await Run(["run", "--db", Db], input: "h\nq\n");

@@ -18,6 +18,7 @@
 | 012 | Energy is a **vital**, not an emotion | Needed to make Resting meaningful in v0.1 without building the Emotional State Engine | Implementing simulated emotions in v0.1 |
 | 013 | **Hand-written CLI argument parsing** in `CliApp`, testable with fake I/O and time | Four commands do not justify a dependency | System.CommandLine, Spectre.Console.Cli |
 | 014 | **JSON configuration** with defaults in code; unknown properties rejected | Typos in tuning files must fail loudly | Microsoft.Extensions.Configuration (silent on typos, more machinery) |
+| 015 | **Monotonic step time** (`max(input, LastUpdatedAt)`) and `run` refuses a database saved ahead of the clock | Decisions, experiences and trait changes stay in time order; a brain from a forward simulation must not run frozen | Stamping events at processing time (loses the observed time), freezing the brain until the clock catches up, `simulate --db` never persisting virtual time |
 
 ## Risks
 
