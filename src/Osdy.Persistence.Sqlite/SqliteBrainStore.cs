@@ -188,7 +188,7 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
             ("$spontaneous", OptionalText(runtime.LastSpontaneousAt)),
             ("$interaction", OptionalText(runtime.LastInteractionAt)));
 
-        if (result.Event is { } evt)
+        if (result.RecordedEvent is { } evt)
         {
             Execute(
                 "INSERT INTO events (id, type, occurred_at, source, target_id) VALUES ($id, $type, $at, $source, $target)",

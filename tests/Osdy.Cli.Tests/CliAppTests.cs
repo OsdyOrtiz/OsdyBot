@@ -637,6 +637,92 @@ public sealed class CliAppTests : IDisposable
         Assert.Contains("Initial Curiosity (2)", result.Error, StringComparison.Ordinal);
     }
 
+    private const string WithNegative = """
+        00:00:05 HumanInteractionDetected
+        00:00:20 PositiveInteraction
+        00:00:40 NegativeInteraction
+        00:05:00 wait
+        """;
+
+    private const string WithoutNegative = """
+        00:00:05 HumanInteractionDetected
+        00:00:20 PositiveInteraction
+        00:05:00 wait
+        """;
+
+    private const string NoNegativeRecording = """
+        { "recording": { "eventTypes": ["HumanPresenceDetected", "HumanLeft", "HumanInteractionDetected", "PositiveInteraction", "InteractionEnded", "NoveltyDetected", "OwnerRollbackRequested"] } }
+        """;
+
+    [Fact]
+    public async Task Unrecorded_event_types_are_traced_and_reacted_to_but_leave_only_an_unlinked_decision()
+    {
+        var config = Write("no-negative.json", NoNegativeRecording);
+        var reference = Path.Combine(_directory, "reference.db");
+        await Run("simulate", Write("without.txt", WithoutNegative), "--db", reference);
+
+        var result = await Run("simulate", Write("with.txt", WithNegative), "--db", Db, "--config", config);
+        var export = Path.Combine(_directory, "memory.json");
+        var exported = await Run("export", export, "--db", Db);
+        var status = await Run("status", "--db", Db);
+        var referenceStatus = await Run("status", "--db", reference);
+
+        Assert.Equal((CliApp.Ok, CliApp.Ok, CliApp.Ok, CliApp.Ok), (result.ExitCode, exported.ExitCode, status.ExitCode, referenceStatus.ExitCode));
+        Assert.Empty(result.Error);
+        AssertInOrder(result.Output, "[EVENT] NegativeInteraction", "[DECISION] BackOff (interaction-feedback)", "[STATE] Attentive");
+        var negativeStep = result.Output.Split("[EVENT] NegativeInteraction")[1].Split("[TIME]")[0];
+        Assert.DoesNotContain("[EXPERIENCE]", negativeStep, StringComparison.Ordinal);
+        Assert.DoesNotContain("[LEARNING]", negativeStep, StringComparison.Ordinal);
+
+        using var document = JsonDocument.Parse(File.ReadAllText(export));
+        var root = document.RootElement;
+        Assert.DoesNotContain(root.GetProperty("events").EnumerateArray(), e => e.GetProperty("type").GetString() == "NegativeInteraction");
+        Assert.Equal(2, root.GetProperty("events").GetArrayLength());
+        Assert.DoesNotContain(root.GetProperty("experiences").EnumerateArray(), e => e.GetProperty("kind").GetString() == "NegativeInteraction");
+        Assert.Equal(1, root.GetProperty("experiences").GetArrayLength());
+        var backOff = root.GetProperty("decisions").EnumerateArray().Single(d => d.GetProperty("action").GetString() == "BackOff");
+        Assert.Equal(JsonValueKind.Null, backOff.GetProperty("eventId").ValueKind);
+        Assert.Equal("Attentive", backOff.GetProperty("toState").GetString());
+
+        string[] Traits(string output) => [.. output.Split('\n').Where(line => line.StartsWith("[TRAIT]", StringComparison.Ordinal))];
+        Assert.Equal(Traits(referenceStatus.Output), Traits(status.Output));
+        Assert.Contains("[MEMORY] eventos 2, decisiones 6, experiencias 1, cambios de rasgos 2", status.Output, StringComparison.Ordinal);
+        Assert.Contains("[MEMORY] eventos 2, decisiones 5, experiencias 1, cambios de rasgos 2", referenceStatus.Output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Excluding_the_owner_rollback_is_a_usage_error()
+    {
+        var config = Write("bad-recording.json", """{ "recording": { "eventTypes": ["PositiveInteraction"] } }""");
+
+        var result = await Run("simulate", Write("meeting.txt", Meeting), "--config", config);
+
+        Assert.Equal(CliApp.Usage, result.ExitCode);
+        Assert.Empty(result.Output);
+        Assert.StartsWith(
+            "[ERROR] Invalid brain options:" + Environment.NewLine
+            + "Recording.EventTypes must include OwnerRollbackRequested: the owner's rollback is always recorded." + Environment.NewLine,
+            result.Error,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Unknown_event_names_in_the_recording_config_are_a_usage_error()
+    {
+        var config = Write("unknown-recording.json", """{ "recording": { "eventTypes": ["Dance", "OwnerRollbackRequested"] } }""");
+
+        var result = await Run("simulate", Write("meeting.txt", Meeting), "--config", config);
+
+        Assert.Equal(CliApp.Usage, result.ExitCode);
+        Assert.Empty(result.Output);
+        Assert.StartsWith(
+            "[ERROR] Invalid brain options:" + Environment.NewLine
+            + "Recording.EventTypes contains unknown event type 'Dance'. Valid types: HumanPresenceDetected, HumanLeft, HumanInteractionDetected, "
+            + "PositiveInteraction, NegativeInteraction, InteractionEnded, NoveltyDetected, OwnerRollbackRequested." + Environment.NewLine,
+            result.Error,
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Config_overrides_are_applied()
     {

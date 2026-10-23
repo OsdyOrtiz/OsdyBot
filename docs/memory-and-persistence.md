@@ -99,7 +99,7 @@ Rollback metadata was added as optional fields, so `schemaVersion` stays `1`: re
 
 | Need | Mechanism |
 |------|-----------|
-| Control what is stored | Per-event-type recording policy in options (allowlist) |
+| Control what is stored | `recording.eventTypes` in the `--config` JSON: the allowlist of recorded event types (below). Default: every type |
 | Inspect | `osdy memories list [--db <file>] [--count <n>]` lists the latest experiences (default 10), oldest first, with ID, time, kind, valence and outcome. `osdy memories show <id> [--db <file>]` includes the event, decision reasons and trait changes. Both open read-only. |
 | Correct | `osdy rollback <change-id> [--db <file>] [--config <file.json>]` undoes that trait change and every later one, across all traits, and records the correction (below) |
 | Export | `osdy export <file.json> [--db <file>]` → JSON snapshot and all history rows (format above) |
@@ -107,6 +107,18 @@ Rollback metadata was added as optional fields, so `schemaVersion` stays `1`: re
 | Protect | File permissions `0600`; encryption at rest is a pending decision before any camera/voice data (v0.5) |
 
 Unknown experience IDs fail with exit code 1 and `[ERROR] No existe la experiencia <id>` without changing stored data. Successful deletion prints `[MEMORY] Experiencia <id> y evento <event-id> eliminados; aprendizaje conservado.` and exits with code 0. `status` marks missing experience links as `experiencia <id> (olvidada)`; inspection uses the same trait-change rendering. Forgotten experiences cannot be shown. Export omits the deleted fact and interpretation, retaining decisions and tombstone change records. Forgetting is not learning rollback (see Rollback semantics).
+
+### Recording policy (ADR-019)
+
+`recording.eventTypes` lists the event types that are stored and learned from; omitted, it is every type, so nothing changes by default. Names are case-insensitive `EventType` values.
+
+```json
+{ "recording": { "eventTypes": ["HumanPresenceDetected", "HumanLeft", "HumanInteractionDetected", "PositiveInteraction", "InteractionEnded", "NoveltyDetected", "OwnerRollbackRequested"] } }
+```
+
+This example stops recording `NegativeInteraction`. An event outside the list is still processed, so the robot reacts (decision and state transition, shown as `[EVENT]`/`[DECISION]` in the live trace), but it produces no experience and no trait change, and no event row is written. The decision is stored with `event_id = NULL`, so nothing else about the event remains. Such events cannot be exported with `events export` or replayed from the database.
+
+`OwnerRollbackRequested` is the owner's audit command, not a perception, and must stay in the list: a config that omits it, or names an unknown event type, is a usage error (exit 2, `[ERROR] Invalid brain options:` followed by the message). The policy applies to events handled after the config is loaded; stored rows are never changed by it (use `forget` for that).
 
 ### Rollback semantics (ADR-018)
 
@@ -118,4 +130,4 @@ Unknown experience IDs fail with exit code 1 and `[ERROR] No existe la experienc
 - **Budget.** The original learning stays spent (not refunded) and a restoration is not learning (not charged), live or after restart: `Load()` counts only `Learning` rows. See `docs/personality-model.md`.
 - **Scenarios.** A scenario line cannot carry a target, so `osdy events export` refuses a database that contains rollback requests: exit 1, `[ERROR] La base de datos contiene solicitudes de rollback que un escenario no puede reproducir; usá 'osdy export <archivo.json>' para conservar el registro completo.`, empty stdout, no file created or overwritten. Scenario files containing `OwnerRollbackRequested` are rejected. `osdy export` keeps the complete record.
 
-Deletion is logical: it does not promise forensic erasure from SQLite free pages, WAL files, backups or previously written exports. v0.1 stores only simulated, non-personal events; recording policy, correction and further privacy protections remain deferred.
+Deletion is logical: it does not promise forensic erasure from SQLite free pages, WAL files, backups or previously written exports. v0.1 stores only simulated, non-personal events; further privacy protections remain deferred.

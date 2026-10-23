@@ -26,6 +26,27 @@ public sealed class SqliteBrainStoreTests : IDisposable
         }
     }
 
+    [Fact]
+    public void Unrecorded_event_is_not_written_and_its_decision_has_no_event_link()
+    {
+        var options = new BrainOptions
+        {
+            Recording = new RecordingOptions { EventTypes = [nameof(EventType.OwnerRollbackRequested)] },
+        };
+        using var store = new SqliteBrainStore(DbPath);
+        var brain = BrainBootstrap.Boot(store, options, T0).Brain;
+
+        var step = brain.Handle(BrainEvent.Create(EventType.PositiveInteraction, T0.AddMinutes(5), "test"));
+        store.Commit(step);
+
+        var decision = Assert.Single(store.GetRecentDecisions(10));
+        Assert.Equal(step.Decision!.Id, decision.Id);
+        Assert.Null(decision.EventId);
+        Assert.Empty(store.GetEvents());
+        Assert.Equal(new MemoryStats(0, 1, 0, 0), store.GetStats());
+        Assert.Equal(brain.Personality.Traits.Select(t => t.Value), store.Load()!.Personality.Traits.Select(t => t.Value));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

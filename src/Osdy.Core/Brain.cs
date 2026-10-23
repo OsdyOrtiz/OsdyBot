@@ -111,16 +111,24 @@ public sealed class Brain
         }
 
         var decision = _engine.Decide(Context(now, evt), DecisionTrigger.Event)!;
+        var recorded = Options.Recording.IsRecorded(evt.Type);
+        if (!recorded)
+        {
+            // Processed to react, never remembered: the decision stays, without a link to the event.
+            decision = decision with { EventId = null };
+        }
+
         Apply(decision);
 
-        var experience = LearningEngine.Interpret(evt, decision, Options.Experiences);
+        // Events the owner chose not to record are not learned from (L8): no experience, no trait change.
+        var experience = recorded ? LearningEngine.Interpret(evt, decision, Options.Experiences) : null;
         IReadOnlyList<TraitChange> changes = [];
         if (experience is not null)
         {
             (Personality, changes) = LearningEngine.Learn(experience, Personality, Options);
         }
 
-        return Result(now, DecisionTrigger.Event, evt, decision, experience, changes);
+        return Result(now, DecisionTrigger.Event, evt, decision, experience, changes, recorded);
     }
 
     /// <summary>
@@ -216,8 +224,9 @@ public sealed class Brain
         BrainEvent? evt,
         Decision? decision,
         Experience? experience,
-        IReadOnlyList<TraitChange> changes) =>
-        new(now, trigger, evt, decision, experience, changes, Snapshot);
+        IReadOnlyList<TraitChange> changes,
+        bool eventRecorded = true) =>
+        new(now, trigger, evt, decision, experience, changes, Snapshot, eventRecorded);
 
     /// <summary>
     /// Step time never goes backwards: an input stamped before the last step (an event posted before a tick that was

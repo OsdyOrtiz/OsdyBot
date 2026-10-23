@@ -27,8 +27,12 @@ public sealed record StepResult(
     Decision? Decision,
     Experience? Experience,
     IReadOnlyList<TraitChange> TraitChanges,
-    BrainSnapshot Snapshot)
+    BrainSnapshot Snapshot,
+    bool EventRecorded = true)
 {
+    /// <summary>The event to persist: null when there is none or the recording policy excludes its type.</summary>
+    public BrainEvent? RecordedEvent => EventRecorded ? Event : null;
+
     /// <summary>True when the step produced something that must be recorded (not just energy drift).</summary>
     public bool HasRecords => Event is not null || Decision is not null || Experience is not null || TraitChanges.Count > 0;
 }

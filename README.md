@@ -42,7 +42,7 @@ Expected output (abridged):
 | Command | What it does |
 |---------|--------------|
 | `osdy run [--db <file>] [--config <file.json>]` | Runs the brain in real time. Type a key + Enter: `p` presence, `l` left, `h` interaction, `+` positive, `-` negative, `e` interaction ended, `n` novelty, `s` status, `q` quit (also Ctrl+C or end of input). |
-| `osdy simulate <scenario.txt> [--db <file>] [--config <file.json>]` | Replays a scenario in virtual time (seconds per day of behavior). Without `--db` nothing is saved. |
+| `osdy simulate <scenario.txt> [--db <file>] [--config <file.json>]` | Replays a scenario in virtual time (seconds per day of behavior). Without `--db` nothing is saved. A `recording.eventTypes` config list chooses which event types are stored and learned from ([recording policy](docs/memory-and-persistence.md#recording-policy-adr-019)). |
 | `osdy status [--db <file>] [--count <n>]` | Identity, traits vs. baseline, state, energy, and the latest decisions (with reasons), experiences and trait changes. |
 | `osdy memories list [--db <file>] [--count <n>]` | Lists the latest experiences (default 10), oldest first, without modifying the database. |
 | `osdy memories show <id> [--db <file>]` | Inspects an experience, its event, decision and trait changes, read-only. |

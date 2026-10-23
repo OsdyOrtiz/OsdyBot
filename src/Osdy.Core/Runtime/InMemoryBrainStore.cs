@@ -18,9 +18,9 @@ public sealed class InMemoryBrainStore : IBrainStore
     public void Commit(StepResult result)
     {
         _snapshot = result.Snapshot;
-        if (result.Event is not null)
+        if (result.RecordedEvent is { } evt)
         {
-            _events.Add(result.Event);
+            _events.Add(evt);
         }
 
         if (result.Decision is not null)

@@ -9,10 +9,12 @@ input (Start | Event | Tick at time t)
   1. advance vitals from LastUpdatedAt to t (energy drains or recovers by state)
   2. evaluate decision rules in priority order → first match wins (or explicit NoAction for events)
   3. validate and apply the state transition
-  4. derive experience (if the event has one) → learning → trait changes
+  4. derive experience (if the event has one and its type is recorded) → learning → trait changes
   5. return StepResult (nothing is persisted or printed by the Brain itself)
 host: commit StepResult to IBrainStore (one transaction) → notify IBrainObserver
 ```
+
+An event type excluded by `recording.eventTypes` follows steps 1–3 only: the decision is stamped without an event link, there is no experience or trait change, and `StepResult.EventRecorded` is false so the host writes no event row (the observer still sees the event). See ADR-019.
 
 Persist **before** notify: the outside world never sees an action whose cause was not saved.
 

@@ -46,6 +46,7 @@ public sealed record BrainOptions
     public VitalsOptions Vitals { get; init; } = new();
     public DecisionOptions Decisions { get; init; } = new();
     public RuntimeOptions Runtime { get; init; } = new();
+    public RecordingOptions Recording { get; init; } = new();
 
     public IReadOnlyList<string> Validate()
     {
@@ -61,6 +62,7 @@ public sealed record BrainOptions
         errors.AddRange(Vitals.Validate());
         errors.AddRange(Decisions.Validate());
         errors.AddRange(Runtime.Validate());
+        errors.AddRange(Recording.Validate());
         return errors;
     }
 
