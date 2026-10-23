@@ -34,9 +34,18 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
               Muestra identidad, rasgos, estado y las últimas decisiones con sus causas.
           osdy events export <escenario.txt> [--db <archivo>]
               Exporta los eventos guardados al formato de escenario para reproducirlos.
+          osdy export <archivo.json> [--db <archivo>]
+              Exporta toda la memoria guardada a JSON sin modificar la base de datos.
 
         Base de datos por defecto: data/osdy-brain.db
         """;
+
+    // Relaxed escaping keeps '+' in timestamps and accents readable; the file is data, never embedded in HTML.
+    private static readonly JsonSerializerOptions ExportJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
 
     private static readonly Dictionary<string, EventType> Keys = new(StringComparer.Ordinal)
     {
@@ -60,6 +69,7 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
                 "simulate" when command.Positional.Count == 1 => Simulate(command),
                 "status" when command.Positional.Count == 0 => Status(command),
                 "events" when command.Positional is ["export", _] => ExportEvents(command),
+                "export" when command.Positional.Count == 1 => ExportMemory(command),
                 "help" or "--help" or "-h" => Help(),
                 _ => UsageError($"Comando no válido: {string.Join(' ', args)}"),
             };
@@ -227,6 +237,45 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
             output.WriteLine($"{c.OccurredAt.ToString("u", CultureInfo.InvariantCulture)} {c.Trait} {ConsoleRenderer.Delta(c.Delta)} -> {c.NewValue.ToString("0.0000", CultureInfo.InvariantCulture)} ({c.Rule}, experiencia {c.ExperienceId})");
         }
 
+        return Ok;
+    }
+
+    private int ExportMemory(Arguments command)
+    {
+        if (!File.Exists(command.Database))
+        {
+            error.WriteLine($"[ERROR] No existe la base de datos {command.Database}");
+            return Failure;
+        }
+
+        using var store = SqliteBrainStore.OpenReadOnly(command.Database);
+        if (store?.Load() is not { } snapshot)
+        {
+            error.WriteLine($"[ERROR] No hay ningún cerebro guardado en {command.Database}");
+            return Failure;
+        }
+
+        var memory = MemoryExport.Create(snapshot, store, time.GetUtcNow());
+        var path = command.Positional[0];
+        // Never overwrite an existing file: the output could alias the database (even through a link).
+        FileStream destination;
+        try
+        {
+            destination = new FileStream(path, FileMode.CreateNew, FileAccess.Write);
+        }
+        catch (IOException) when (File.Exists(path) || Directory.Exists(path))
+        {
+            error.WriteLine($"[ERROR] El archivo {path} ya existe; elegí otro nombre para el export.");
+            return Failure;
+        }
+
+        using (destination)
+        {
+            JsonSerializer.Serialize(destination, memory, ExportJsonOptions);
+        }
+
+        var count = (long)memory.Events.Count + memory.Decisions.Count + memory.Experiences.Count + memory.TraitChanges.Count;
+        output.WriteLine($"[EXPORT] {count.ToString(CultureInfo.InvariantCulture)} registros exportados a {path}");
         return Ok;
     }
 

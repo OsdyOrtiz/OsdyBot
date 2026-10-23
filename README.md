@@ -45,6 +45,7 @@ Expected output (abridged):
 | `osdy simulate <scenario.txt> [--db <file>] [--config <file.json>]` | Replays a scenario in virtual time (seconds per day of behavior). Without `--db` nothing is saved. |
 | `osdy status [--db <file>] [--count <n>]` | Identity, traits vs. baseline, state, energy, and the latest decisions (with reasons), experiences and trait changes. |
 | `osdy events export <scenario.txt> [--db <file>]` | Exports stored events to the scenario format so they can be replayed. |
+| `osdy export <file.json> [--db <file>]` | Exports all saved memory as [versioned JSON](docs/memory-and-persistence.md#json-export-format-version-1), opening the database read-only. Requires a new output file. |
 
 During development, prefix with `dotnet run --project src/Osdy.Cli --`. The default database is `data/osdy-brain.db` (git-ignored). Exit codes: `0` ok, `1` runtime error, `2` usage error.
 

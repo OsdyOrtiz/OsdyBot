@@ -33,7 +33,7 @@ trait_changes (seq INTEGER PRIMARY KEY, id TEXT UNIQUE, occurred_at TEXT, trait 
 - Opening v1 read-write explicitly migrates to v2: both obsolete `traits.budget_window_start` and `traits.budget_used` columns are dropped and `user_version` is advanced in one transaction. All rows and remaining values are preserved.
 - `trait_changes` is the single source of truth for budget history. `Load()` rebuilds per-trait entries from `occurred_at` and `ABS(delta)` up to the stored runtime `last_updated_at`. Storage has no learning options, so it loads the recorded history; `Brain.Restore` retains only entries in `(last_updated_at - BudgetWindow, last_updated_at]` using the caller's options. Learning prunes again at each experience's time.
 - WAL journal mode for crash safety.
-- Inspection commands (`osdy status`, `osdy events export`) open the file read-only: they never create a schema, change the journal mode or write anything, even to an empty file. A v1 file is refused with guidance to open it read-write first for migration; no legacy read path is maintained.
+- Inspection commands (`osdy status`, `osdy events export`, `osdy export`) open the file read-only: they never create a schema, change the journal mode or write anything, even to an empty file. A v1 file is refused with guidance to open it read-write first for migration; no legacy read path is maintained.
 
 ## Write strategy
 
@@ -41,15 +41,64 @@ trait_changes (seq INTEGER PRIMARY KEY, id TEXT UNIQUE, occurred_at TEXT, trait 
 - A step is committed when it produced any record (event, decision, experience, trait change). Steps that only drained energy are committed as a checkpoint at most every `CheckpointInterval` (default 30 s). On restart, at most that much energy drift is lost, which is acceptable.
 - Rationale: reduce write amplification on SD/eMMC storage later (risk R4).
 
-## Privacy and control (design; implementation v0.2)
+## JSON export format (version 1)
+
+`osdy export <file.json> [--db <file>]` exports the saved snapshot and every history row, without starting the brain or modifying the database. The destination must not already exist (preventing accidental overwrites, including the database itself). Missing databases or databases without a saved brain fail with exit code 1 and no output file. Success prints `[EXPORT] <n> registros exportados a <path>`, where `n` counts events, decisions, experiences and trait changes, and exits with code 0.
+
+The output is one UTF-8 JSON document. Property names are English camelCase; enums are names, numbers are culture-invariant JSON numbers, IDs are UUID strings and timestamps use ISO 8601 round-trip format (`O`, including an offset and seven fractional digits). Nullable timestamps and links remain JSON `null`. History arrays are oldest first by stable insertion order, including rows sharing a timestamp. SQLite-only sequence keys and the singleton runtime row ID are not exported.
+
+| Field | Contents |
+|-------|----------|
+| `schemaVersion` | Export format version, currently `1`; independent of SQLite schema version |
+| `exportedAt` | UTC export time supplied by the host's `TimeProvider`, not the simulation time |
+| `identity` | `id`, `name`, `createdAt` |
+| `traits` | Array of `kind`, `value`, `baseline` |
+| `runtime` | `state`, `energy`, `stateEnteredAt`, `lastUpdatedAt`, nullable `lastSpontaneousAt` and `lastInteractionAt` |
+| `events` | Array of `id`, `type`, `occurredAt`, `source` |
+| `decisions` | Array of `id`, `occurredAt`, `trigger`, nullable `eventId`, `kind`, `rule`, `action`, `fromState`, `toState`, `reasons` (string array) |
+| `experiences` | Array of `id`, `occurredAt`, `eventId`, `decisionId`, `kind`, `state`, `action`, `valence`, `importance`, `outcome`, `source` |
+| `traitChanges` | Array of `id`, `occurredAt`, `trait`, `oldValue`, `newValue`, `delta`, `experienceId`, `rule` |
+
+Shape example with empty history arrays:
+
+```json
+{
+  "schemaVersion": 1,
+  "exportedAt": "2026-01-01T08:00:00.0000000+00:00",
+  "identity": {
+    "id": "00000000-0000-0000-0000-000000000001",
+    "name": "Osdy",
+    "createdAt": "2026-01-01T08:00:00.0000000+00:00"
+  },
+  "traits": [
+    { "kind": "Curiosity", "value": 0.7, "baseline": 0.7 },
+    { "kind": "Sociability", "value": 0.35, "baseline": 0.35 },
+    { "kind": "Confidence", "value": 0.4, "baseline": 0.4 }
+  ],
+  "runtime": {
+    "state": "Idle",
+    "energy": 1.0,
+    "stateEnteredAt": "2026-01-01T08:00:00.0000000+00:00",
+    "lastUpdatedAt": "2026-01-01T08:00:00.0000000+00:00",
+    "lastSpontaneousAt": null,
+    "lastInteractionAt": null
+  },
+  "events": [],
+  "decisions": [],
+  "experiences": [],
+  "traitChanges": []
+}
+```
+
+## Privacy and control (v0.2; only export implemented)
 
 | Need | Mechanism |
 |------|-----------|
 | Control what is stored | Per-event-type recording policy in options (allowlist) |
 | Inspect | `osdy memories list/show` |
 | Correct | Mark an experience as invalid; its trait changes are reverted by replaying the change log |
-| Export | `osdy export` → JSON (identity, traits, experiences, decisions, changes) |
+| Export | `osdy export <file.json> [--db <file>]` → JSON snapshot and all history rows (format above) |
 | Delete | `osdy forget <id>` deletes the experience and its event; trait changes keep a tombstone reference |
 | Protect | File permissions `0600`; encryption at rest is a pending decision before any camera/voice data (v0.5) |
 
-v0.1 stores only simulated, non-personal events, which is why these are deferred.
+v0.1 stores only simulated, non-personal events; the remaining privacy controls are deferred.

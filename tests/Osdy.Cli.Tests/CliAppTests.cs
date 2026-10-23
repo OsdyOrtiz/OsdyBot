@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Time.Testing;
 
@@ -111,6 +113,97 @@ public sealed class CliAppTests : IDisposable
     }
 
     [Fact]
+    public async Task Export_writes_all_saved_memory_as_a_versioned_json_document()
+    {
+        await Run("simulate", Write("meeting.txt", Meeting), "--db", Db);
+        var status = await Run("status", "--db", Db);
+        var path = Path.Combine(_directory, "memory.json");
+        var before = File.ReadAllBytes(Db);
+
+        var result = await Run("export", path, "--db", Db);
+
+        Assert.Equal(CliApp.Ok, result.ExitCode);
+        Assert.Empty(result.Error);
+        Assert.DoesNotContain("\\u002B", File.ReadAllText(path), StringComparison.Ordinal); // timestamps stay readable: +00:00
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        var root = document.RootElement;
+        Assert.Equal(1, root.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(T0.ToString("O", CultureInfo.InvariantCulture), root.GetProperty("exportedAt").GetString());
+        Assert.Equal("Osdy", root.GetProperty("identity").GetProperty("name").GetString());
+        Assert.Equal(3, root.GetProperty("traits").GetArrayLength());
+        var curiosity = root.GetProperty("traits").EnumerateArray().Single(t => t.GetProperty("kind").GetString() == "Curiosity");
+        Assert.Equal(0.7, curiosity.GetProperty("baseline").GetDouble());
+        Assert.True(curiosity.GetProperty("value").GetDouble() > 0.7);
+        Assert.Equal("Idle", root.GetProperty("runtime").GetProperty("state").GetString());
+        Assert.True(root.GetProperty("runtime").GetProperty("energy").GetDouble() > 0);
+        Assert.Equal(T0.AddMinutes(5).ToString("O", CultureInfo.InvariantCulture),
+            root.GetProperty("runtime").GetProperty("lastUpdatedAt").GetString());
+        var events = root.GetProperty("events");
+        var decisions = root.GetProperty("decisions");
+        var experiences = root.GetProperty("experiences");
+        var changes = root.GetProperty("traitChanges");
+        Assert.Contains($"[MEMORY] eventos {events.GetArrayLength()}, decisiones {decisions.GetArrayLength()}, experiencias {experiences.GetArrayLength()}, cambios de rasgos {changes.GetArrayLength()}",
+            status.Output, StringComparison.Ordinal);
+        var count = events.GetArrayLength() + decisions.GetArrayLength() + experiences.GetArrayLength() + changes.GetArrayLength();
+        Assert.Equal($"[EXPORT] {count} registros exportados a {path}{Environment.NewLine}", result.Output);
+        Assert.Equal("HumanPresenceDetected", events[0].GetProperty("type").GetString());
+        Assert.Equal("PositiveInteraction", experiences[0].GetProperty("kind").GetString());
+        Assert.Equal("positive-interaction", changes[0].GetProperty("rule").GetString());
+        var interaction = decisions.EnumerateArray().Single(d => d.GetProperty("rule").GetString() == "human-interaction");
+        Assert.Contains("Energy sufficient: 1.00 >= 0.30",
+            interaction.GetProperty("reasons").EnumerateArray().Select(r => r.GetString()));
+        foreach (var rows in new[] { events, decisions, experiences, changes })
+        {
+            var dates = rows.EnumerateArray().Select(r => DateTimeOffset.ParseExact(
+                r.GetProperty("occurredAt").GetString()!, "O", CultureInfo.InvariantCulture)).ToArray();
+            Assert.Equal(dates.Order(), dates);
+        }
+        Assert.Equal(before, File.ReadAllBytes(Db));
+    }
+
+    [Fact]
+    public async Task Export_refuses_an_existing_output_file_without_overwriting_it()
+    {
+        await Run("simulate", Write("meeting.txt", Meeting), "--db", Db);
+        var path = Write("existing.json", "keep this file");
+
+        var result = await Run("export", path, "--db", Db);
+
+        Assert.Equal(CliApp.Failure, result.ExitCode);
+        Assert.Empty(result.Output);
+        Assert.Equal($"[ERROR] El archivo {path} ya existe; elegí otro nombre para el export.", result.Error.TrimEnd());
+        Assert.Equal("keep this file", File.ReadAllText(path));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Export_of_a_missing_or_empty_database_fails_without_writing(bool empty)
+    {
+        if (empty)
+        {
+            Write("brain.db", "");
+        }
+        var path = Path.Combine(_directory, "memory.json");
+
+        var result = await Run("export", path, "--db", Db);
+
+        Assert.Equal(CliApp.Failure, result.ExitCode);
+        Assert.Empty(result.Output);
+        var message = empty ? $"No hay ningún cerebro guardado en {Db}" : $"No existe la base de datos {Db}";
+        Assert.Equal($"[ERROR] {message}{Environment.NewLine}", result.Error);
+        Assert.False(File.Exists(path));
+        if (empty)
+        {
+            Assert.Equal(0, new FileInfo(Db).Length);
+        }
+        else
+        {
+            Assert.False(File.Exists(Db));
+        }
+    }
+
+    [Fact]
     public async Task Run_processes_console_keys_and_saves_state_on_quit()
     {
         var result = await Run(["run", "--db", Db], input: "h\n+\nx\ns\nq\n");
@@ -181,6 +274,7 @@ public sealed class CliAppTests : IDisposable
 
     [Theory]
     [InlineData(new[] { "dance" }, "Comando no válido: dance")]
+    [InlineData(new[] { "export" }, "Comando no válido: export")]
     [InlineData(new string[0], "Falta el comando.")]
     [InlineData(new[] { "status", "--db" }, "Falta el valor de --db.")]
     [InlineData(new[] { "status", "--count", "0" }, "--count debe ser un entero positivo.")]
