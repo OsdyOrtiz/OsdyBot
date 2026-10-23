@@ -50,7 +50,12 @@ public sealed class SqliteBrainStoreTests : IDisposable
         var loaded = reopened.Load()!;
 
         Assert.Equal(saved.Identity, loaded.Identity);
-        Assert.Equal(saved.Personality.Traits, loaded.Personality.Traits);
+        foreach (var trait in saved.Personality.Traits)
+        {
+            var restored = loaded.Personality[trait.Kind];
+            Assert.Equal(trait with { RecentChanges = [] }, restored with { RecentChanges = [] });
+            Assert.Equal(trait.RecentChanges, restored.RecentChanges);
+        }
         Assert.Equal(saved.Runtime, loaded.Runtime);
     }
 

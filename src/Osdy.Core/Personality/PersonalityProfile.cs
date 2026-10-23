@@ -14,7 +14,7 @@ public sealed class PersonalityProfile
     public static PersonalityProfile Initial(PersonalityOptions options, DateTimeOffset now) =>
         new(Enum.GetValues<TraitKind>().ToDictionary(
             kind => kind,
-            kind => new TraitState(kind, options.Initial(kind), options.Initial(kind), now, 0)));
+            kind => new TraitState(kind, options.Initial(kind), options.Initial(kind), [])));
 
     /// <summary>Rebuilds a profile from stored traits; with options, values are clamped into the current bounds.</summary>
     public static PersonalityProfile Restore(IEnumerable<TraitState> stored, PersonalityOptions? options = null)

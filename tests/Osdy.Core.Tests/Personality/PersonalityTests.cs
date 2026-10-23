@@ -16,7 +16,7 @@ public class PersonalityTests
         Assert.Equal(0.35, personality[TraitKind.Sociability].Value);
         Assert.Equal(0.40, personality[TraitKind.Confidence].Value);
         Assert.All(personality.Traits, t => Assert.Equal(t.Value, t.Baseline));
-        Assert.All(personality.Traits, t => Assert.Equal(0, t.BudgetUsed));
+        Assert.All(personality.Traits, t => Assert.Empty(t.RecentChanges));
     }
 
     [Fact]
@@ -24,9 +24,9 @@ public class PersonalityTests
     {
         var stored = new[]
         {
-            new TraitState(TraitKind.Curiosity, 0.99, 0.70, Now, 0),
-            new TraitState(TraitKind.Sociability, 0.01, 0.35, Now, 0),
-            new TraitState(TraitKind.Confidence, 0.40, 0.40, Now, 0),
+            new TraitState(TraitKind.Curiosity, 0.99, 0.70, []),
+            new TraitState(TraitKind.Sociability, 0.01, 0.35, []),
+            new TraitState(TraitKind.Confidence, 0.40, 0.40, []),
         };
 
         var personality = PersonalityProfile.Restore(stored, new PersonalityOptions());
@@ -38,7 +38,7 @@ public class PersonalityTests
     [Fact]
     public void Restore_requires_every_trait()
     {
-        var stored = new[] { new TraitState(TraitKind.Curiosity, 0.5, 0.5, Now, 0) };
+        var stored = new[] { new TraitState(TraitKind.Curiosity, 0.5, 0.5, []) };
 
         Assert.Throws<InvalidOperationException>(() => PersonalityProfile.Restore(stored, new PersonalityOptions()));
     }

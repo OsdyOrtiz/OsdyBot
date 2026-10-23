@@ -8,7 +8,7 @@ public class TraitEvolutionTests
     private static readonly PersonalityOptions Bounds = new();
     private static readonly LearningOptions Learning = new();
 
-    private static TraitState Trait(double value) => new(TraitKind.Confidence, value, value, Start, 0);
+    private static TraitState Trait(double value) => new(TraitKind.Confidence, value, value, []);
 
     [Fact]
     public void Positive_signal_matches_the_documented_worked_example()
@@ -18,7 +18,7 @@ public class TraitEvolutionTests
 
         Assert.Equal(0.01 * 0.6 * 0.5 * (0.55 / 0.90), update.Delta, precision: 10);
         Assert.Equal(0.40 + update.Delta, update.Trait.Value, precision: 10);
-        Assert.Equal(Math.Abs(update.Delta), update.Trait.BudgetUsed, precision: 10);
+        Assert.Equal(new TraitBudgetEntry(Start, Math.Abs(update.Delta)), Assert.Single(update.Trait.RecentChanges));
     }
 
     [Fact]
@@ -55,25 +55,42 @@ public class TraitEvolutionTests
     }
 
     [Fact]
-    public void Budget_resets_when_the_window_elapses()
+    public void A_change_frees_its_budget_exactly_at_the_sliding_window_edge()
     {
-        var trait = Trait(0.40) with { BudgetUsed = Learning.BudgetPerWindow };
+        var trait = Trait(0.40) with
+        {
+            RecentChanges = [new(Start, Learning.BudgetPerWindow)],
+        };
+        var edge = Start + Learning.BudgetWindow;
 
-        var blocked = TraitEvolution.Apply(trait, 1, 1, Start.AddHours(23), Bounds, Learning);
-        var allowed = TraitEvolution.Apply(trait, 1, 1, Start.AddHours(24), Bounds, Learning);
+        var blocked = TraitEvolution.Apply(trait, 1, 1, edge.AddTicks(-1), Bounds, Learning);
+        var allowed = TraitEvolution.Apply(blocked.Trait, 1, 1, edge, Bounds, Learning);
 
         Assert.Equal(0, blocked.Delta);
         Assert.Same(trait, blocked.Trait);
         Assert.True(allowed.Delta > 0);
-        Assert.Equal(Start.AddHours(24), allowed.Trait.BudgetWindowStart);
-        Assert.Equal(allowed.Delta, allowed.Trait.BudgetUsed, precision: 10);
+        Assert.Equal(new TraitBudgetEntry(edge, allowed.Delta), Assert.Single(allowed.Trait.RecentChanges));
+        Assert.Single(trait.RecentChanges); // The previous immutable state is unchanged.
     }
 
     [Fact]
-    public void A_burst_across_a_window_boundary_is_capped_at_twice_the_budget()
+    public void Expired_changes_are_pruned_even_when_no_movement_is_applied()
+    {
+        var trait = Trait(0.40) with { RecentChanges = [new(Start, 0.01)] };
+
+        var update = TraitEvolution.Apply(trait, 0, 1, Start + Learning.BudgetWindow, Bounds, Learning);
+
+        Assert.Equal(0, update.Delta);
+        Assert.Equal(trait.Value, update.Trait.Value);
+        Assert.Empty(update.Trait.RecentChanges);
+        Assert.Single(trait.RecentChanges);
+    }
+
+    [Fact]
+    public void A_burst_across_a_window_boundary_is_capped_at_one_budget()
     {
         var trait = TraitEvolution.Apply(Trait(0.40), 1, 1, Start, Bounds, Learning).Trait;
-        var anchor = trait.BudgetWindowStart;
+        var anchor = Start;
         double moved = 0;
         var at = anchor + Learning.BudgetWindow - TimeSpan.FromMinutes(5);
         for (var i = 0; i < 200; i++, at += TimeSpan.FromSeconds(5))
@@ -83,9 +100,30 @@ public class TraitEvolutionTests
             trait = update.Trait;
         }
 
-        // Documented worst case of the fixed window (docs/personality-model.md, property 3).
-        Assert.True(moved <= (2 * Learning.BudgetPerWindow) + 1e-9, $"moved {moved}");
-        Assert.True(moved > Learning.BudgetPerWindow, "the fixed window allows more than one budget at a boundary");
+        // Any window-length span is capped at one budget, including the old fixed-window boundary.
+        Assert.True(moved <= Learning.BudgetPerWindow + 1e-9, $"moved {moved}, budget {Learning.BudgetPerWindow}");
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(-1)]
+    public void Only_expired_movement_is_freed_and_both_directions_consume_budget(double signal)
+    {
+        var retainedAt = Start.AddHours(1);
+        var trait = Trait(0.40) with
+        {
+            RecentChanges = [new(Start, 0.001), new(retainedAt, Learning.BudgetPerWindow - 0.001)],
+        };
+        var at = Start + Learning.BudgetWindow;
+
+        var update = TraitEvolution.Apply(trait, signal, 1, at, Bounds, Learning);
+
+        Assert.Equal(signal * 0.001, update.Delta, precision: 10);
+        Assert.Equal(trait.Value + update.Delta, update.Trait.Value, precision: 10);
+        Assert.Equal(2, update.Trait.RecentChanges.Count);
+        Assert.Equal(trait.RecentChanges[1], update.Trait.RecentChanges[0]);
+        Assert.Equal(new TraitBudgetEntry(at, Math.Abs(update.Delta)), update.Trait.RecentChanges[1]);
+        Assert.Equal(Learning.BudgetPerWindow, update.Trait.RecentChanges.Sum(change => change.Magnitude), precision: 10);
     }
 
     [Fact]

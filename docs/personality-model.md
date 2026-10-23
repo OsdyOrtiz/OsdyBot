@@ -22,10 +22,11 @@ headroom  = (max − v)/(max − min)  if raw > 0
             (v − min)/(max − min)  if raw < 0               (soft bound, in [0, 1])
 Δ₁        = raw · headroom
 Δ₂        = clamp(Δ₁, −MaxStep, +MaxStep)                   (per-experience cap)
-window    : if now − BudgetWindowStart ≥ BudgetWindow → BudgetWindowStart = now, BudgetUsed = 0
-Δ₃        = sign(Δ₂) · min(|Δ₂|, BudgetPerWindow − BudgetUsed)   (window budget)
+recent    = changes with time in (now − BudgetWindow, now]  (prune expired entries)
+used      = sum(|Δ| for each recent change)
+Δ₃        = sign(Δ₂) · min(|Δ₂|, max(0, BudgetPerWindow − used)) (sliding budget)
 v'        = clamp(v + Δ₃, min, max)
-BudgetUsed += |v' − v|
+recent   += (now, |v' − v|)                                 (only if not discarded)
 ```
 
 A change with `|v' − v| < 1e-6` is discarded (no record).
@@ -36,7 +37,7 @@ A change with `|v' − v| < 1e-6` is discarded (no record).
 |------|----------|
 | `headroom` | Hitting the bounds abruptly; changes slow down near extremes (diminishing returns) |
 | `MaxStep` | A single dramatic experience rewriting the personality |
-| Window budget | A burst (100 interactions in an hour) moving a trait more than one budget per window (at most 2 × budget in any span of one window length, see below); also caps oscillation amplitude because movement in *both* directions consumes budget |
+| Window budget | A burst (100 interactions in an hour) moving a trait more than 1 × budget in any span of one window length; also caps oscillation amplitude because movement in *both* directions consumes budget |
 | `clamp` | Floating-point overshoot |
 | `TraitChange` log | Unexplainable changes; enables rollback (v0.2) by reverting deltas after a point |
 
@@ -65,10 +66,10 @@ Worked example (matches the brief): Confidence 0.40, one positive interaction (`
 
 1. **Bounded:** `min ≤ v ≤ max` after any sequence of experiences.
 2. **Gradual:** `|Δ| ≤ MaxStep` per experience.
-3. **Rate-limited:** total movement per trait within one budget window ≤ `BudgetPerWindow`. The window is *fixed*, anchored at the first change after the previous window expired — not a sliding window. Worst case, a burst straddling a window boundary moves a trait up to `2 × BudgetPerWindow` within a short span (0.06 with defaults). A true sliding window needs per-trait change history in the brain; it is a v0.2 candidate (pending decision P8).
+3. **Rate-limited:** total absolute movement per trait in **any** interval `(t − BudgetWindow, t]` is ≤ `1 × BudgetPerWindow` (0.03 with defaults), including bursts across former fixed-window boundaries. `TraitState` keeps recent changes as `(time, |Δ|)`; each change consumes the remaining trailing-window budget. Entries expire exactly at the left edge. Proof: at every change the trailing sum is capped; any window-length interval has no more movement than the trailing window ending at its last change.
 4. **Explainable:** each change references its experience and rule.
 5. **Monotone under consistent experience:** only positive experiences never decrease a positively-gained trait.
-6. **Divergence without identity loss:** two instances with the same start but different histories diverge, and each stays within `elapsed windows × BudgetPerWindow` of its baseline.
+6. **Divergence without identity loss:** two instances with the same start but different histories diverge, while absolute movement in every sliding window stays ≤ `BudgetPerWindow`. Over elapsed time `T ≥ 0` since initialization, displacement from baseline is at most `(floor(T / BudgetWindow) + 1) × BudgetPerWindow`, as well as being bounded by the trait limits. Both movement directions consume the same budget.
 
 ## Measuring evolution
 

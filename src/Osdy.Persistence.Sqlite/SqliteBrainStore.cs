@@ -91,8 +91,11 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
                     Enum.Parse<TraitKind>(reader.GetString(0)),
                     reader.GetDouble(1),
                     reader.GetDouble(2),
-                    Time(reader.GetString(3)),
-                    reader.GetDouble(4)));
+                    // Schema-v1 adapter: conservatively restore the aggregate at its latest change.
+                    // T2 replaces this with exact history from trait_changes and schema v2.
+                    reader.GetDouble(4) > 0
+                        ? Array.AsReadOnly<TraitBudgetEntry>([new(Time(reader.GetString(3)), reader.GetDouble(4))])
+                        : []));
             }
         }
 
@@ -138,8 +141,10 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
                 ("$kind", trait.Kind.ToString()),
                 ("$value", trait.Value),
                 ("$baseline", trait.Baseline),
-                ("$start", Text(trait.BudgetWindowStart)),
-                ("$used", trait.BudgetUsed));
+                ("$start", Text(trait.RecentChanges.Count == 0
+                    ? snapshot.Identity.CreatedAt
+                    : trait.RecentChanges.Max(change => change.OccurredAt))),
+                ("$used", trait.RecentChanges.Sum(change => change.Magnitude)));
         }
 
         var runtime = snapshot.Runtime;

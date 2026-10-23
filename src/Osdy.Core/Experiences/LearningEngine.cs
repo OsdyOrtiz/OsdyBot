@@ -56,12 +56,12 @@ public static class LearningEngine
                     experience.OccurredAt,
                     options.Personality,
                     options.Learning);
+                personality = personality.With(update.Trait);
                 if (update.Delta == 0)
                 {
                     continue;
                 }
 
-                personality = personality.With(update.Trait);
                 changes.Add(new TraitChange(
                     Guid.CreateVersion7(experience.OccurredAt),
                     experience.OccurredAt,

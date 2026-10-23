@@ -19,9 +19,13 @@ public static class TraitEvolution
         PersonalityOptions bounds,
         LearningOptions learning)
     {
-        var windowElapsed = now - trait.BudgetWindowStart >= learning.BudgetWindow;
-        var windowStart = windowElapsed ? now : trait.BudgetWindowStart;
-        var used = windowElapsed ? 0 : trait.BudgetUsed;
+        var recent = trait.RecentChanges
+            .Where(change => change.OccurredAt > now - learning.BudgetWindow && change.OccurredAt <= now)
+            .ToArray();
+        var used = recent.Sum(change => change.Magnitude);
+        var pruned = recent.Length == trait.RecentChanges.Count
+            ? trait
+            : trait with { RecentChanges = Array.AsReadOnly(recent) };
 
         var raw = learning.LearningRate * signal * importance;
         var range = bounds.TraitMax - bounds.TraitMin;
@@ -37,14 +41,13 @@ public static class TraitEvolution
         var applied = newValue - trait.Value;
         if (Math.Abs(applied) < MinimumChange)
         {
-            return new TraitUpdate(trait, 0);
+            return new TraitUpdate(pruned, 0);
         }
 
         var updated = trait with
         {
             Value = newValue,
-            BudgetWindowStart = windowStart,
-            BudgetUsed = used + Math.Abs(applied),
+            RecentChanges = Array.AsReadOnly<TraitBudgetEntry>([.. recent, new(now, Math.Abs(applied))]),
         };
         return new TraitUpdate(updated, applied);
     }
