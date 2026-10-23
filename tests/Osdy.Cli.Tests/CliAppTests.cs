@@ -204,6 +204,162 @@ public sealed class CliAppTests : IDisposable
     }
 
     [Fact]
+    public async Task Memories_list_and_show_are_read_only_and_explain_each_memory()
+    {
+        await Run("simulate", Write("meeting.txt", Meeting), "--db", Db);
+        using var store = Osdy.Persistence.Sqlite.SqliteBrainStore.OpenReadOnly(Db)!;
+        var memories = store.GetRecentExperiences(10);
+        var before = File.ReadAllBytes(Db);
+        var list = await Run("memories", "list", "--db", Db);
+        Assert.Equal(CliApp.Ok, list.ExitCode);
+        Assert.Empty(list.Error);
+        Assert.Equal(string.Concat(memories.Select(MemoryLine)), list.Output);
+        var last = await Run("memories", "list", "--count", "1", "--db", Db);
+        Assert.Equal(CliApp.Ok, last.ExitCode);
+        Assert.Empty(last.Error);
+        Assert.Equal(MemoryLine(memories[^1]), last.Output);
+        foreach (var memory in memories)
+        {
+            var show = await Run("memories", "show", memory.Id.ToString(), "--db", Db);
+            var evt = store.GetEvents().Single(e => e.Id == memory.EventId);
+            var decision = store.GetRecentDecisions(int.MaxValue).Single(d => d.Id == memory.DecisionId);
+            var changes = store.GetRecentTraitChanges(int.MaxValue).Where(c => c.ExperienceId == memory.Id);
+            Assert.Equal(CliApp.Ok, show.ExitCode);
+            Assert.Empty(show.Error);
+            Assert.Equal(MemoryLine(memory)
+                + $"[EVENT] {evt.Id} {evt.Type} {evt.OccurredAt.ToString("u", CultureInfo.InvariantCulture)} fuente: {evt.Source}{Environment.NewLine}"
+                + $"[DECISION] {decision.Action} ({decision.Rule}){Environment.NewLine}"
+                + $"    porque: {string.Join("; ", decision.Reasons)}{Environment.NewLine}"
+                + string.Concat(changes.Select(c => ChangeLine(c))), show.Output);
+        }
+        Assert.Equal(before, File.ReadAllBytes(Db));
+    }
+
+    [Fact]
+    public async Task Memories_list_defaults_to_the_last_ten_in_oldest_first_order()
+    {
+        var scenario = string.Join('\n', Enumerable.Range(1, 12).Select(i => $"00:00:{i:00} PositiveInteraction"));
+        await Run("simulate", Write("many.txt", scenario), "--db", Db);
+        using var store = Osdy.Persistence.Sqlite.SqliteBrainStore.OpenReadOnly(Db)!;
+        var all = store.GetRecentExperiences(100);
+        Assert.Equal(12, all.Count);
+        var result = await Run("memories", "list", "--db", Db);
+        Assert.Equal(CliApp.Ok, result.ExitCode);
+        Assert.Empty(result.Error);
+        Assert.Equal(string.Concat(all.Skip(2).Select(MemoryLine)), result.Output);
+    }
+
+    [Theory]
+    [InlineData("list", false)]
+    [InlineData("list", true)]
+    [InlineData("show", false)]
+    [InlineData("show", true)]
+    [InlineData("forget", false)]
+    [InlineData("forget", true)]
+    public async Task Memory_commands_do_not_create_a_missing_or_empty_database(string command, bool empty)
+    {
+        if (empty)
+        {
+            Write("brain.db", "");
+        }
+        var id = Guid.NewGuid().ToString();
+        var args = command switch
+        {
+            "list" => new[] { "memories", "list", "--db", Db },
+            "show" => new[] { "memories", "show", id, "--db", Db },
+            _ => new[] { "forget", id, "--db", Db },
+        };
+        var result = await Run(args);
+        Assert.Equal(CliApp.Failure, result.ExitCode);
+        Assert.Empty(result.Output);
+        var message = !empty ? $"No existe la base de datos {Db}"
+            : command == "forget" ? $"No existe la experiencia {id}" : $"No hay ningún cerebro guardado en {Db}";
+        Assert.Equal($"[ERROR] {message}{Environment.NewLine}", result.Error);
+        if (empty)
+        {
+            Assert.Empty(File.ReadAllBytes(Db));
+        }
+        else
+        {
+            Assert.False(File.Exists(Db));
+        }
+    }
+
+    [Fact]
+    public async Task Forget_removes_the_fact_from_inspection_and_export_but_preserves_learning()
+    {
+        await Run("simulate", Write("meeting.txt", Meeting), "--db", Db);
+        Osdy.Core.Experiences.Experience memory;
+        Osdy.Core.Experiences.TraitChange[] changes;
+        string traits;
+        int decisions;
+        using (var store = Osdy.Persistence.Sqlite.SqliteBrainStore.OpenReadOnly(Db)!)
+        {
+            memory = store.GetRecentExperiences(10)[0];
+            changes = store.GetRecentTraitChanges(100).ToArray();
+            traits = JsonSerializer.Serialize(store.Load()!.Personality.Traits);
+            decisions = store.GetStats().Decisions;
+        }
+        var result = await Run("forget", memory.Id.ToString(), "--db", Db);
+        Assert.Equal(CliApp.Ok, result.ExitCode);
+        Assert.Empty(result.Error);
+        Assert.Equal($"[MEMORY] Experiencia {memory.Id} y evento {memory.EventId} eliminados; aprendizaje conservado.{Environment.NewLine}", result.Output);
+        var show = await Run("memories", "show", memory.Id.ToString(), "--db", Db);
+        Assert.Equal(CliApp.Failure, show.ExitCode);
+        Assert.Empty(show.Output);
+        Assert.Equal($"[ERROR] No existe la experiencia {memory.Id}{Environment.NewLine}", show.Error);
+        var status = await Run("status", "--db", Db);
+        Assert.Equal(CliApp.Ok, status.ExitCode);
+        Assert.Empty(status.Error);
+        Assert.Contains($"[MEMORY] eventos 4, decisiones {decisions}, experiencias 1, cambios de rasgos {changes.Length}{Environment.NewLine}", status.Output, StringComparison.Ordinal);
+        foreach (var change in changes.Where(c => c.ExperienceId == memory.Id))
+        {
+            Assert.Contains(ChangeLine(change, forgotten: true), status.Output, StringComparison.Ordinal);
+        }
+        using (var store = Osdy.Persistence.Sqlite.SqliteBrainStore.OpenReadOnly(Db)!)
+        {
+            Assert.Equal(traits, JsonSerializer.Serialize(store.Load()!.Personality.Traits));
+            Assert.Equal(changes, store.GetRecentTraitChanges(100));
+            var other = Assert.Single(store.GetRecentExperiences(10));
+            var otherShow = await Run("memories", "show", other.Id.ToString(), "--db", Db);
+            Assert.Equal(CliApp.Ok, otherShow.ExitCode);
+            Assert.Empty(otherShow.Error);
+        }
+        var path = Path.Combine(_directory, "forgotten.json");
+        var export = await Run("export", path, "--db", Db);
+        Assert.Equal(CliApp.Ok, export.ExitCode);
+        Assert.Empty(export.Error);
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        var root = document.RootElement;
+        Assert.DoesNotContain(root.GetProperty("events").EnumerateArray(), e => e.GetProperty("id").GetGuid() == memory.EventId);
+        Assert.DoesNotContain(root.GetProperty("experiences").EnumerateArray(), e => e.GetProperty("id").GetGuid() == memory.Id);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("decisions").EnumerateArray().Single(d => d.GetProperty("id").GetGuid() == memory.DecisionId).GetProperty("eventId").ValueKind);
+        Assert.Contains(root.GetProperty("traitChanges").EnumerateArray(), c => c.GetProperty("experienceId").GetGuid() == memory.Id);
+    }
+
+    [Theory]
+    [InlineData("forget")]
+    [InlineData("show")]
+    public async Task Unknown_memory_fails_without_changing_database_bytes(string command)
+    {
+        await Run("simulate", Write("meeting.txt", Meeting), "--db", Db);
+        var id = Guid.NewGuid();
+        var before = File.ReadAllBytes(Db);
+        var args = command == "show" ? new[] { "memories", "show", id.ToString(), "--db", Db } : new[] { "forget", id.ToString(), "--db", Db };
+        var result = await Run(args);
+        Assert.Equal(CliApp.Failure, result.ExitCode);
+        Assert.Empty(result.Output);
+        Assert.Equal($"[ERROR] No existe la experiencia {id}{Environment.NewLine}", result.Error);
+        Assert.Equal(before, File.ReadAllBytes(Db));
+    }
+
+    private static string MemoryLine(Osdy.Core.Experiences.Experience memory) =>
+        $"[MEMORY] {memory.Id} {memory.OccurredAt.ToString("u", CultureInfo.InvariantCulture)} {memory.Kind} valence {memory.Valence.ToString("+0.00;-0.00", CultureInfo.InvariantCulture)}: {memory.Outcome}{Environment.NewLine}";
+
+    private static string ChangeLine(Osdy.Core.Experiences.TraitChange change, bool forgotten = false) =>
+        $"{change.OccurredAt.ToString("u", CultureInfo.InvariantCulture)} {change.Trait} {change.Delta.ToString(Math.Abs(change.Delta) < 0.0005 ? "+0.0000;-0.0000" : "+0.000;-0.000", CultureInfo.InvariantCulture)} -> {change.NewValue.ToString("0.0000", CultureInfo.InvariantCulture)} ({change.Rule}, experiencia {change.ExperienceId}{(forgotten ? " (olvidada)" : "")}){Environment.NewLine}";
+
+    [Fact]
     public async Task Run_processes_console_keys_and_saves_state_on_quit()
     {
         var result = await Run(["run", "--db", Db], input: "h\n+\nx\ns\nq\n");
@@ -275,6 +431,11 @@ public sealed class CliAppTests : IDisposable
     [Theory]
     [InlineData(new[] { "dance" }, "Comando no válido: dance")]
     [InlineData(new[] { "export" }, "Comando no válido: export")]
+    [InlineData(new[] { "memories" }, "Comando no válido: memories")]
+    [InlineData(new[] { "forget" }, "Comando no válido: forget")]
+    [InlineData(new[] { "forget", "invalid" }, "Id de experiencia no válido: invalid")]
+    [InlineData(new[] { "memories", "show", "invalid" }, "Id de experiencia no válido: invalid")]
+    [InlineData(new[] { "memories", "list", "--count", "0" }, "--count debe ser un entero positivo.")]
     [InlineData(new string[0], "Falta el comando.")]
     [InlineData(new[] { "status", "--db" }, "Falta el valor de --db.")]
     [InlineData(new[] { "status", "--count", "0" }, "--count debe ser un entero positivo.")]

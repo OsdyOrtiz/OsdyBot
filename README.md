@@ -44,6 +44,9 @@ Expected output (abridged):
 | `osdy run [--db <file>] [--config <file.json>]` | Runs the brain in real time. Type a key + Enter: `p` presence, `l` left, `h` interaction, `+` positive, `-` negative, `e` interaction ended, `n` novelty, `s` status, `q` quit (also Ctrl+C or end of input). |
 | `osdy simulate <scenario.txt> [--db <file>] [--config <file.json>]` | Replays a scenario in virtual time (seconds per day of behavior). Without `--db` nothing is saved. |
 | `osdy status [--db <file>] [--count <n>]` | Identity, traits vs. baseline, state, energy, and the latest decisions (with reasons), experiences and trait changes. |
+| `osdy memories list [--db <file>] [--count <n>]` | Lists the latest experiences (default 10), oldest first, without modifying the database. |
+| `osdy memories show <id> [--db <file>]` | Inspects an experience, its event, decision and trait changes, read-only. |
+| `osdy forget <id> [--db <file>]` | Atomically deletes an experience and its event; keeps decisions and learned trait changes as tombstones. Does not undo learning. |
 | `osdy events export <scenario.txt> [--db <file>]` | Exports stored events to the scenario format so they can be replayed. |
 | `osdy export <file.json> [--db <file>]` | Exports all saved memory as [versioned JSON](docs/memory-and-persistence.md#json-export-format-version-1), opening the database read-only. Requires a new output file. |
 

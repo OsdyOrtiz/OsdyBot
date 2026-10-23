@@ -25,6 +25,83 @@ public sealed class SqliteBrainStoreTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Forget_is_atomic_and_preserves_actions_learning_and_restart_budget(bool failDelete)
+    {
+        var options = new BrainOptions
+        {
+            Learning = new LearningOptions
+            {
+                LearningRate = 1, MaxStep = 0.005, BudgetPerWindow = 0.01,
+                BudgetWindow = TimeSpan.FromHours(1),
+            },
+        };
+        Guid forgotten;
+        BrainSnapshot before;
+        using (var store = new SqliteBrainStore(DbPath))
+        {
+            var brain = BrainBootstrap.Boot(store, options, T0).Brain;
+            store.Commit(brain.Handle(BrainEvent.Create(EventType.PositiveInteraction, T0.AddMinutes(5), "test")));
+            store.Commit(brain.Handle(BrainEvent.Create(EventType.PositiveInteraction, T0.AddMinutes(20), "test")));
+            before = store.Load()!;
+            var memory = store.GetRecentExperiences(10)[0];
+            forgotten = memory.Id;
+            var events = store.GetEvents();
+            var decisions = store.GetRecentDecisions(10);
+            var experiences = store.GetRecentExperiences(10);
+            var changes = store.GetRecentTraitChanges(10);
+            var stats = store.GetStats();
+            Assert.False(store.ForgetExperience(Guid.NewGuid()));
+            Assert.Equal(stats, store.GetStats());
+            if (failDelete)
+            {
+                using var connection = new SqliteConnection($"Data Source={DbPath};Pooling=False");
+                connection.Open();
+                using var command = connection.CreateCommand();
+                // Fail at the last deletion, after the decision was detached and the experience deleted.
+                command.CommandText = "CREATE TRIGGER refuse_forget BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT, 'injected failure'); END;";
+                command.ExecuteNonQuery();
+                Assert.Throws<SqliteException>(() => store.ForgetExperience(forgotten));
+                Assert.Equal(events, store.GetEvents());
+                Assert.Equal(experiences, store.GetRecentExperiences(10));
+                Assert.Equal(stats, store.GetStats());
+            }
+            else
+            {
+                Assert.True(store.ForgetExperience(forgotten));
+                Assert.Equal(events.Where(e => e.Id != memory.EventId), store.GetEvents());
+                Assert.Equal(experiences.Skip(1), store.GetRecentExperiences(10));
+                Assert.Equal(stats with { Events = stats.Events - 1, Experiences = stats.Experiences - 1 }, store.GetStats());
+            }
+            var afterDecisions = store.GetRecentDecisions(10);
+            for (var i = 0; i < decisions.Count; i++)
+            {
+                var expected = !failDelete && decisions[i].EventId == memory.EventId
+                    ? decisions[i] with { EventId = null } : decisions[i];
+                Assert.Equal(expected with { Reasons = [] }, afterDecisions[i] with { Reasons = [] });
+                Assert.Equal(expected.Reasons, afterDecisions[i].Reasons);
+            }
+            Assert.Equal(changes, store.GetRecentTraitChanges(10));
+        }
+        using var reopened = new SqliteBrainStore(DbPath);
+        var loaded = reopened.Load()!;
+        Assert.Equal(before.Identity, loaded.Identity);
+        Assert.Equal(before.Runtime, loaded.Runtime);
+        foreach (var trait in before.Personality.Traits)
+        {
+            var actual = loaded.Personality[trait.Kind];
+            Assert.Equal(trait with { RecentChanges = [] }, actual with { RecentChanges = [] });
+            Assert.Equal(trait.RecentChanges, actual.RecentChanges);
+        }
+        var restored = BrainBootstrap.Boot(reopened, options, T0.AddMinutes(25)).Brain;
+        var capped = restored.Handle(BrainEvent.Create(EventType.PositiveInteraction, T0.AddMinutes(30), "test"));
+        Assert.DoesNotContain(capped.TraitChanges, c => c.Trait == TraitKind.Sociability);
+        var released = restored.Handle(BrainEvent.Create(EventType.PositiveInteraction, T0.AddMinutes(65), "test"));
+        Assert.Equal(0.005, Assert.Single(released.TraitChanges, c => c.Trait == TraitKind.Sociability).Delta, 10);
+    }
+
     [Fact]
     public void A_v1_database_migrates_without_losing_any_rows_or_values()
     {
@@ -281,6 +358,7 @@ public sealed class SqliteBrainStoreTests : IDisposable
         Assert.Equal(startup.Snapshot.Identity, readOnly.Load()!.Identity);
         Assert.Equal(new MemoryStats(0, 0, 0, 0), readOnly.GetStats());
         Assert.Throws<SqliteException>(() => readOnly.Commit(startup));
+        Assert.False(readOnly.ForgetExperience(Guid.NewGuid()));
     }
 
     [Fact]

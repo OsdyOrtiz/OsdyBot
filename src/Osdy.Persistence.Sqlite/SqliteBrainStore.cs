@@ -272,7 +272,32 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
             Enum.Parse<BrainState>(r.GetString(8)),
             JsonSerializer.Deserialize<List<string>>(r.GetString(9)) ?? []));
 
-    public IReadOnlyList<Experience> GetRecentExperiences(int count) => Recent(
+    /// <summary>Finds a stored experience, or null for an unknown or forgotten id.</summary>
+    public Experience? GetExperience(Guid id) => ReadExperiences(1, id).SingleOrDefault();
+
+    /// <summary>
+    /// Forgets the fact atomically, retaining the robot's actions and learned trait changes.
+    /// Returns false without changing any rows when the experience does not exist.
+    /// </summary>
+    public bool ForgetExperience(Guid id)
+    {
+        using var transaction = _connection.BeginTransaction();
+        var experience = GetExperience(id);
+        if (experience is null)
+        {
+            return false;
+        }
+
+        Execute("UPDATE decisions SET event_id = NULL WHERE event_id = $event", ("$event", experience.EventId.ToString()));
+        Execute("DELETE FROM experiences WHERE id = $id", ("$id", id.ToString()));
+        Execute("DELETE FROM events WHERE id = $event", ("$event", experience.EventId.ToString()));
+        transaction.Commit();
+        return true;
+    }
+
+    public IReadOnlyList<Experience> GetRecentExperiences(int count) => ReadExperiences(count);
+
+    private List<Experience> ReadExperiences(int count, Guid? id = null) => Recent(
         "experiences",
         "id, occurred_at, event_id, decision_id, kind, state, action, valence, importance, outcome, source",
         count,
@@ -287,7 +312,7 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
             r.GetDouble(7),
             r.GetDouble(8),
             r.GetString(9),
-            r.GetString(10)));
+            r.GetString(10)), id);
 
     public IReadOnlyList<TraitChange> GetRecentTraitChanges(int count) => Recent(
         "trait_changes",
@@ -365,10 +390,15 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
     }
 
     /// <summary>Selects the last <paramref name="count"/> rows by insertion order and returns them oldest first.</summary>
-    private List<T> Recent<T>(string table, string columns, int count, Func<SqliteDataReader, T> map)
+    private List<T> Recent<T>(string table, string columns, int count, Func<SqliteDataReader, T> map, Guid? id = null)
     {
-        using var command = Command($"SELECT * FROM (SELECT {columns}, seq FROM {table} ORDER BY seq DESC LIMIT $count) ORDER BY seq ASC");
+        var filter = id is null ? "" : "WHERE id = $id";
+        using var command = Command($"SELECT * FROM (SELECT {columns}, seq FROM {table} {filter} ORDER BY seq DESC LIMIT $count) ORDER BY seq ASC");
         command.Parameters.AddWithValue("$count", count);
+        if (id is { } key)
+        {
+            command.Parameters.AddWithValue("$id", key.ToString());
+        }
         using var reader = command.ExecuteReader();
         var rows = new List<T>();
         while (reader.Read())

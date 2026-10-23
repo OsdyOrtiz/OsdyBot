@@ -9,7 +9,7 @@
 | Semantic | Persistent knowledge ("the owner likes being greeted") | — | `facts` table + optional embeddings (v0.4, pending decision) |
 | Working | Context for the current decision | In-process `RuntimeState` (state, energy, last interaction) | Bounded recent-events buffer (v0.2) |
 
-Every experience stores context (state, action), importance, date, source and links to its event and decision. Trait changes link to their experience, which makes any adaptation explainable by a join.
+Every experience stores context (state, action), importance, date, source and links to its event and decision. Trait changes link to their experience, which makes any adaptation explainable by a join while the experience exists; after forgetting, that ID remains as a tombstone (ADR-017).
 
 ## SQLite schema (version 2)
 
@@ -33,7 +33,7 @@ trait_changes (seq INTEGER PRIMARY KEY, id TEXT UNIQUE, occurred_at TEXT, trait 
 - Opening v1 read-write explicitly migrates to v2: both obsolete `traits.budget_window_start` and `traits.budget_used` columns are dropped and `user_version` is advanced in one transaction. All rows and remaining values are preserved.
 - `trait_changes` is the single source of truth for budget history. `Load()` rebuilds per-trait entries from `occurred_at` and `ABS(delta)` up to the stored runtime `last_updated_at`. Storage has no learning options, so it loads the recorded history; `Brain.Restore` retains only entries in `(last_updated_at - BudgetWindow, last_updated_at]` using the caller's options. Learning prunes again at each experience's time.
 - WAL journal mode for crash safety.
-- Inspection commands (`osdy status`, `osdy events export`, `osdy export`) open the file read-only: they never create a schema, change the journal mode or write anything, even to an empty file. A v1 file is refused with guidance to open it read-write first for migration; no legacy read path is maintained.
+- Inspection commands (`osdy status`, `osdy memories list/show`, `osdy events export`, `osdy export`) open the file read-only: they never create a schema, change the journal mode or write anything, even to an empty file. A v1 file is refused with guidance to open it read-write first for migration; no legacy read path is maintained.
 
 ## Write strategy
 
@@ -90,15 +90,17 @@ Shape example with empty history arrays:
 }
 ```
 
-## Privacy and control (v0.2; only export implemented)
+## Privacy and control (v0.2; inspection, export and deletion implemented)
 
 | Need | Mechanism |
 |------|-----------|
 | Control what is stored | Per-event-type recording policy in options (allowlist) |
-| Inspect | `osdy memories list/show` |
+| Inspect | `osdy memories list [--db <file>] [--count <n>]` lists the latest experiences (default 10), oldest first, with ID, time, kind, valence and outcome. `osdy memories show <id> [--db <file>]` includes the event, decision reasons and trait changes. Both open read-only. |
 | Correct | Mark an experience as invalid; its trait changes are reverted by replaying the change log |
 | Export | `osdy export <file.json> [--db <file>]` → JSON snapshot and all history rows (format above) |
-| Delete | `osdy forget <id>` deletes the experience and its event; trait changes keep a tombstone reference |
+| Delete | `osdy forget <id> [--db <file>]` deletes the experience and its event in one transaction. Decisions remain with `event_id = NULL`; trait changes retain `experience_id` as a tombstone. Trait values and restart budget history do not change (ADR-017). |
 | Protect | File permissions `0600`; encryption at rest is a pending decision before any camera/voice data (v0.5) |
 
-v0.1 stores only simulated, non-personal events; the remaining privacy controls are deferred.
+Unknown experience IDs fail with exit code 1 and `[ERROR] No existe la experiencia <id>` without changing stored data. Successful deletion prints `[MEMORY] Experiencia <id> y evento <event-id> eliminados; aprendizaje conservado.` and exits with code 0. `status` marks missing experience links as `experiencia <id> (olvidada)`; inspection uses the same trait-change rendering. Forgotten experiences cannot be shown. Export omits the deleted fact and interpretation, retaining decisions and tombstone change records. Forgetting is not learning rollback (US-14).
+
+Deletion is logical: it does not promise forensic erasure from SQLite free pages, WAL files, backups or previously written exports. v0.1 stores only simulated, non-personal events; recording policy, correction and further privacy protections remain deferred.

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using Osdy.Core;
 using Osdy.Core.Events;
+using Osdy.Core.Experiences;
 using Osdy.Core.Runtime;
 using Osdy.Core.Simulation;
 using Osdy.Persistence.Sqlite;
@@ -32,6 +33,12 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
               Reproduce un escenario en tiempo virtual. Sin --db no guarda nada.
           osdy status [--db <archivo>] [--count <n>]
               Muestra identidad, rasgos, estado y las últimas decisiones con sus causas.
+          osdy memories list [--db <archivo>] [--count <n>]
+              Lista las últimas experiencias (10 por defecto), de más antigua a más reciente.
+          osdy memories show <id> [--db <archivo>]
+              Muestra una experiencia, su evento, decisión y cambios de rasgos.
+          osdy forget <id> [--db <archivo>]
+              Elimina la experiencia y su evento; conserva las acciones y el aprendizaje.
           osdy events export <escenario.txt> [--db <archivo>]
               Exporta los eventos guardados al formato de escenario para reproducirlos.
           osdy export <archivo.json> [--db <archivo>]
@@ -70,6 +77,9 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
                 "status" when command.Positional.Count == 0 => Status(command),
                 "events" when command.Positional is ["export", _] => ExportEvents(command),
                 "export" when command.Positional.Count == 1 => ExportMemory(command),
+                "memories" when command.Positional is ["list"] => Memories(command, null),
+                "memories" when command.Positional is ["show", var id] => Memories(command, MemoryId(id)),
+                "forget" when command.Positional is [var id] => Forget(command, MemoryId(id)),
                 "help" or "--help" or "-h" => Help(),
                 _ => UsageError($"Comando no válido: {string.Join(' ', args)}"),
             };
@@ -234,10 +244,96 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
         output.WriteLine($"-- Últimos {count} cambios de rasgos --");
         foreach (var c in store.GetRecentTraitChanges(count))
         {
-            output.WriteLine($"{c.OccurredAt.ToString("u", CultureInfo.InvariantCulture)} {c.Trait} {ConsoleRenderer.Delta(c.Delta)} -> {c.NewValue.ToString("0.0000", CultureInfo.InvariantCulture)} ({c.Rule}, experiencia {c.ExperienceId})");
+            WriteTraitChange(c, store);
         }
 
         return Ok;
+    }
+
+    private static Guid MemoryId(string text) => Guid.TryParse(text, out var id)
+        ? id : throw new ArgumentException($"Id de experiencia no válido: {text}");
+
+    private int Memories(Arguments command, Guid? id)
+    {
+        if (!File.Exists(command.Database))
+        {
+            error.WriteLine($"[ERROR] No existe la base de datos {command.Database}");
+            return Failure;
+        }
+
+        using var store = SqliteBrainStore.OpenReadOnly(command.Database);
+        if (store?.Load() is null)
+        {
+            error.WriteLine($"[ERROR] No hay ningún cerebro guardado en {command.Database}");
+            return Failure;
+        }
+
+        if (id is null)
+        {
+            foreach (var memory in store.GetRecentExperiences(command.Count))
+            {
+                WriteMemory(memory);
+            }
+            return Ok;
+        }
+
+        if (store.GetExperience(id.Value) is not { } experience)
+        {
+            return UnknownMemory(id.Value);
+        }
+
+        WriteMemory(experience);
+        var evt = store.GetEvents().Single(e => e.Id == experience.EventId);
+        output.WriteLine($"[EVENT] {evt.Id} {evt.Type} {Utc(evt.OccurredAt)} fuente: {evt.Source}");
+        var decision = store.GetRecentDecisions(int.MaxValue).Single(d => d.Id == experience.DecisionId);
+        output.WriteLine($"[DECISION] {decision.Action} ({decision.Rule})");
+        output.WriteLine($"    porque: {string.Join("; ", decision.Reasons)}");
+        foreach (var change in store.GetRecentTraitChanges(int.MaxValue).Where(c => c.ExperienceId == experience.Id))
+        {
+            WriteTraitChange(change, store);
+        }
+        return Ok;
+    }
+
+    private int Forget(Arguments command, Guid id)
+    {
+        // Inspect first without creating or migrating a database, including on unknown ids.
+        Experience experience;
+        if (!File.Exists(command.Database))
+        {
+            error.WriteLine($"[ERROR] No existe la base de datos {command.Database}");
+            return Failure;
+        }
+        using (var readOnly = SqliteBrainStore.OpenReadOnly(command.Database))
+        {
+            if (readOnly?.GetExperience(id) is not { } found)
+            {
+                return UnknownMemory(id);
+            }
+            experience = found;
+        }
+        using var store = new SqliteBrainStore(command.Database);
+        if (!store.ForgetExperience(id))
+        {
+            return UnknownMemory(id);
+        }
+        output.WriteLine($"[MEMORY] Experiencia {id} y evento {experience.EventId} eliminados; aprendizaje conservado.");
+        return Ok;
+    }
+
+    private int UnknownMemory(Guid id)
+    {
+        error.WriteLine($"[ERROR] No existe la experiencia {id}");
+        return Failure;
+    }
+
+    private void WriteMemory(Experience memory) => output.WriteLine(
+        $"[MEMORY] {memory.Id} {Utc(memory.OccurredAt)} {memory.Kind} valence {memory.Valence.ToString("+0.00;-0.00", CultureInfo.InvariantCulture)}: {memory.Outcome}");
+
+    private void WriteTraitChange(TraitChange change, SqliteBrainStore store)
+    {
+        var tombstone = store.GetExperience(change.ExperienceId) is null ? " (olvidada)" : "";
+        output.WriteLine($"{Utc(change.OccurredAt)} {change.Trait} {ConsoleRenderer.Delta(change.Delta)} -> {change.NewValue.ToString("0.0000", CultureInfo.InvariantCulture)} ({change.Rule}, experiencia {change.ExperienceId}{tombstone})");
     }
 
     private int ExportMemory(Arguments command)

@@ -20,6 +20,7 @@
 | 014 | **JSON configuration** with defaults in code; unknown properties rejected | Typos in tuning files must fail loudly | Microsoft.Extensions.Configuration (silent on typos, more machinery) |
 | 015 | **Monotonic step time** (`max(input, LastUpdatedAt)`) and `run` refuses a database saved ahead of the clock | Decisions, experiences and trait changes stay in time order; a brain from a forward simulation must not run frozen | Stamping events at processing time (loses the observed time), freezing the brain until the clock catches up, `simulate --db` never persisting virtual time |
 | 016 | **Sliding trait budget window (P8)** and **schema v2** with explicit v1→v2 migration removing the old aggregate columns | Prevents the 2× boundary burst; `trait_changes` is the single source of truth for restart history. Read-only v1 access is refused with migration guidance, never migrated implicitly | Fixed windows; keep the unused columns; a second legacy read path |
+| 017 | **Forget the fact, keep the learning**: delete event + experience atomically; retain decisions with null event links and unchanged trait changes with experience-ID tombstones | User decision L3: forgetting must not alter personality or the sliding budget after restart. Missing experience links render as forgotten; undoing learning belongs to US-14. No schema change is needed | Forget everything and revert the learning (delete/reverse trait changes), which changes traits and frees budget unexpectedly |
 
 ## Risks
 
