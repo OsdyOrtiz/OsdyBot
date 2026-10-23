@@ -32,7 +32,7 @@ Scenario format (plain text, one entry per line, offset from scenario start):
 00:10:00 wait
 ```
 
-`wait` only advances time. Live event logs can be exported to this format (`osdy events export`) and replayed.
+`wait` only advances time. Offsets may carry a fraction of a second (`00:00:05.25`). Live event logs can be exported to this format (`osdy events export`) and replayed; the export ends with a `wait` at the last time the brain was saved, so ticks after the last event replay too.
 
 ## Key properties and how they are proven
 

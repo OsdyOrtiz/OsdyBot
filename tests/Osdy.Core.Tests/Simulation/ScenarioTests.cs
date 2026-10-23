@@ -48,6 +48,22 @@ public class ScenarioTests
     }
 
     [Fact]
+    public void Sub_second_offsets_are_formatted_and_parsed_without_loss()
+    {
+        ScenarioEntry[] entries =
+        [
+            new(TimeSpan.FromMilliseconds(5250), EventType.HumanLeft),
+            new(S(6), null),
+            new(new TimeSpan(1, 2, 0, 0) + TimeSpan.FromTicks(1), null),
+        ];
+
+        var text = ScenarioParser.Format(entries);
+
+        Assert.Equal("00:00:05.25 HumanLeft\n00:00:06 wait\n1.02:00:00.0000001 wait\n", text);
+        Assert.Equal(entries, ScenarioParser.Parse(text));
+    }
+
+    [Fact]
     public void Replaying_the_same_scenario_produces_the_same_trace()
     {
         var first = Trace(FirstMeeting);

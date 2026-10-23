@@ -65,6 +65,7 @@ One entry per line, offset from the start, `#` for comments:
 ```text
 00:00:05 HumanPresenceDetected
 00:00:10 HumanInteractionDetected
+00:00:12.5 PositiveInteraction   # offsets may carry a fraction of a second
 1.02:00:00 wait          # D.HH:MM:SS for multi-day scenarios; "wait" only advances time
 ```
 

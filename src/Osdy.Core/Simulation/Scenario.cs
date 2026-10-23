@@ -8,11 +8,15 @@ public sealed record ScenarioEntry(TimeSpan Offset, EventType? Event);
 
 /// <summary>
 /// Plain-text scenario format: <c>HH:MM:SS EventType</c> or <c>HH:MM:SS wait</c>, one per line, <c>#</c> comments.
-/// Offsets are relative to the scenario start and must not decrease.
+/// Offsets are relative to the scenario start, may carry a fraction of a second (<c>HH:MM:SS.fff</c>) and must not
+/// decrease.
 /// </summary>
 public static class ScenarioParser
 {
     public const string WaitKeyword = "wait";
+
+    private static readonly string[] OffsetFormats =
+        [@"hh\:mm\:ss", @"hh\:mm\:ss\.FFFFFFF", @"d\.hh\:mm\:ss", @"d\.hh\:mm\:ss\.FFFFFFF"];
 
     public static IReadOnlyList<ScenarioEntry> Parse(string text)
     {
@@ -32,9 +36,9 @@ public static class ScenarioParser
                 throw Error(i, $"expected '<offset> <EventType|wait>' but got '{line}'");
             }
 
-            if (!TimeSpan.TryParseExact(parts[0], [@"hh\:mm\:ss", @"d\.hh\:mm\:ss"], CultureInfo.InvariantCulture, out var offset))
+            if (!TimeSpan.TryParseExact(parts[0], OffsetFormats, CultureInfo.InvariantCulture, out var offset))
             {
-                throw Error(i, $"invalid offset '{parts[0]}' (use HH:MM:SS or D.HH:MM:SS)");
+                throw Error(i, $"invalid offset '{parts[0]}' (use HH:MM:SS, D.HH:MM:SS or either with .fff)");
             }
 
             EventType? evt = null;
@@ -60,7 +64,18 @@ public static class ScenarioParser
     }
 
     public static string Format(IEnumerable<ScenarioEntry> entries) => string.Concat(entries.Select(e =>
-        $"{e.Offset.ToString(e.Offset.Days > 0 ? @"d\.hh\:mm\:ss" : @"hh\:mm\:ss", CultureInfo.InvariantCulture)} {e.Event?.ToString() ?? WaitKeyword}\n"));
+        $"{FormatOffset(e.Offset)} {e.Event?.ToString() ?? WaitKeyword}\n"));
+
+    private static string FormatOffset(TimeSpan offset)
+    {
+        var format = offset.Days > 0 ? @"d\.hh\:mm\:ss" : @"hh\:mm\:ss";
+        if (offset.Ticks % TimeSpan.TicksPerSecond != 0)
+        {
+            format += @"\.FFFFFFF";
+        }
+
+        return offset.ToString(format, CultureInfo.InvariantCulture);
+    }
 
     private static FormatException Error(int index, string message) => new($"Scenario line {index + 1}: {message}");
 }

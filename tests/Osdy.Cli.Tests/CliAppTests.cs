@@ -96,6 +96,21 @@ public sealed class CliAppTests : IDisposable
     }
 
     [Fact]
+    public async Task Export_keeps_sub_second_offsets_and_the_trailing_wait()
+    {
+        await Run("simulate", Write("precise.txt", "00:00:05.5 HumanInteractionDetected\n00:00:20 PositiveInteraction\n00:05:00 wait\n"), "--db", Db);
+        var exported = Path.Combine(_directory, "exported.txt");
+
+        var export = await Run("events", "export", exported, "--db", Db);
+
+        Assert.Equal(CliApp.Ok, export.ExitCode);
+        Assert.Equal($"[EVENTS] 2 eventos exportados a {exported}", export.Output.TrimEnd());
+        Assert.Equal(
+            ["00:00:00 HumanInteractionDetected", "00:00:14.5 PositiveInteraction", "00:04:54.5 wait"],
+            File.ReadAllLines(exported).Skip(1));
+    }
+
+    [Fact]
     public async Task Run_processes_console_keys_and_saves_state_on_quit()
     {
         var result = await Run(["run", "--db", Db], input: "h\n+\nx\ns\nq\n");
@@ -254,7 +269,7 @@ public sealed class CliAppTests : IDisposable
         }
     }
 
-    /// <summary>Each event with the decision it caused. Exports hold only events, so trailing waits are not replayed.</summary>
+    /// <summary>Each event with the decision it caused.</summary>
     private static List<string> Reactions(string output)
     {
         var lines = output.Split('\n').Select(l => l.TrimEnd('\r')).ToList();

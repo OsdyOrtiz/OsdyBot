@@ -40,7 +40,7 @@ Assumption A1: user-facing console tags stay as in the example; technical artifa
 | T8 | S11, L5 | inline | done — RED: rule `novelty` instead of custom; GREEN 91/91 core | see git log `fix(core)` |
 | T9 | S8, L5 | inline | done — RED: CS0117 + empty file grew to 65 536 bytes; GREEN 113/113 | see git log `fix(persistence)` |
 | T10 | S5, L5 | inline | done — RED: hang until the 30 s guard; GREEN 16/16 CLI, stable 10×, real binary run exit 0 | see git log `fix(cli)` |
-| T11 | S6, L5 | inline | pending — `events export` keeps trailing waits and sub-second offsets | |
+| T11 | S6, L5 | inline | done — RED: parser rejected `05.5`, format dropped `.25`; GREEN 116/116 | see git log `fix(simulation)` |
 | T12 | S6, S10, L5 | inline | pending — timestamps never go backwards (needs a decision) | |
 
 Route evidence: no Writer trigger (single sequential stream, no parallel disjoint units); parent writes inline. T6 is an independent verifier because the runner adds async ordering (Risk item 4).

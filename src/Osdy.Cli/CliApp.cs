@@ -237,8 +237,14 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
             return Failure;
         }
 
+        // The final wait keeps the time the brain kept running after its last event (ticks are not stored as events).
         var first = events[0].OccurredAt;
-        var entries = events.Select(e => new ScenarioEntry(e.OccurredAt - first, e.Type));
+        var entries = events.Select(e => new ScenarioEntry(e.OccurredAt - first, e.Type)).ToList();
+        if (store!.Load() is { } snapshot && snapshot.Runtime.LastUpdatedAt > events[^1].OccurredAt)
+        {
+            entries.Add(new ScenarioEntry(snapshot.Runtime.LastUpdatedAt - first, null));
+        }
+
         var path = command.Positional[1];
         File.WriteAllText(
             path,
