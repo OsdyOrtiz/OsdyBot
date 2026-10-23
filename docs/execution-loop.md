@@ -59,7 +59,9 @@ Forbidden on purpose: `Resting → Curious`, `Resting → Interacting` (waking u
 
 **Boredom time** (rule 9): `IdleBeforeExplore × (1.5 − Curiosity)`. Curious instances get bored sooner.
 
-If an event matches no rule, the brain records an explicit `NoAction` decision with the reason "no rule applies in state X". Ticks that change nothing are not recorded.
+If an event matches no rule, the brain records an explicit `NoAction` decision with the reason "No rule applies to E in state X". Ticks that change nothing are not recorded.
+
+A deliberate action *re-enters* its target state even when the state does not change (e.g. `Investigate` while already Curious restarts the curiosity period). `NoAction` never resets the time in state.
 
 ## Vitals: energy
 
@@ -86,6 +88,8 @@ console / adapters ──────────┼──▶ Channel<BrainInput
 ```
 
 - One consumer means the `Brain` is never touched concurrently: no locks.
+- The observer only receives steps that produced records (events, decisions, experiences, trait changes).
+- On shutdown, events already posted are still processed, then a final checkpoint is saved.
 - The timer uses the BCL `TimeProvider`, so tests drive it with a fake clock.
 - **Failure handling:** if a step or commit throws, the runner reports it through `IBrainObserver.OnError`, reloads the brain from the last committed snapshot, and continues. After `MaxConsecutiveFailures` (default 5) it stops instead of looping on a broken store.
 

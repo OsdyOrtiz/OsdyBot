@@ -16,6 +16,8 @@
 | 010 | **No randomness in v0.1** | Determinism is an acceptance criterion; spontaneity comes from time + personality | Seeded randomness now (added later only if behavior feels mechanical) |
 | 011 | **No mean reversion in v0.1** | Every trait change must be caused by an experience | Time-based pull toward baseline (re-evaluate in v0.2) |
 | 012 | Energy is a **vital**, not an emotion | Needed to make Resting meaningful in v0.1 without building the Emotional State Engine | Implementing simulated emotions in v0.1 |
+| 013 | **Hand-written CLI argument parsing** in `CliApp`, testable with fake I/O and time | Four commands do not justify a dependency | System.CommandLine, Spectre.Console.Cli |
+| 014 | **JSON configuration** with defaults in code; unknown properties rejected | Typos in tuning files must fail loudly | Microsoft.Extensions.Configuration (silent on typos, more machinery) |
 
 ## Risks
 

@@ -33,7 +33,7 @@ Assumption A1: user-facing console tags stay as in the example; technical artifa
 | T2 | S3, S9, S13 | inline | done — RED: compile failure before implementation; GREEN 18/18 | `feat(personality)` 22fd5fb |
 | T3 | S4, S6, S7, S9, S10, S13 | inline | done — RED not observed (code written before tests); compensated with 2 mutation checks (budget removed → 3 fail; interaction tracking removed → 1 fail); GREEN 75/75 | `feat(core)` brain step commit |
 | T4 | S2, S8, S11 | inline | done — RED: CS0246 `SqliteBrainStore` missing; first GREEN attempt failed (`no such column: seq`), fixed; GREEN 82/82 | `feat(persistence)` commit |
-| T5 | S5, S6, S12, S14, S15 | inline | pending | — |
+| T5 | S5, S6, S12, S14, S15 | inline | done — RED: CLI tests written after code (not observed); found + fixed 2 defects during functional run (Investigate did not re-enter Curious; shutdown dropped queued events); GREEN 106/106; runner tests 15× and CLI tests 10× stable; real binary run verified | `feat(cli)` commit |
 | T6 | all | delegated verifier (feature end) | pending | — |
 
 Route evidence: no Writer trigger (single sequential stream, no parallel disjoint units); parent writes inline. T6 is an independent verifier because the runner adds async ordering (Risk item 4).

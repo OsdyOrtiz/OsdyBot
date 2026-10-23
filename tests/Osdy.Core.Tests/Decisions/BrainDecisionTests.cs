@@ -235,6 +235,30 @@ public class BrainDecisionTests
     }
 
     [Fact]
+    public void Investigating_novelty_while_already_curious_restarts_the_curiosity_period()
+    {
+        var brain = New();
+        brain.Handle(EventType.NoveltyDetected, S(0));
+        brain.Handle(EventType.NoveltyDetected, S(20));
+
+        var before = brain.Tick(S(49));
+        var after = brain.Tick(S(50)).Decision!;
+
+        Assert.Null(before.Decision);
+        Assert.Equal(BehaviorAction.LoseInterest, after.Action);
+    }
+
+    [Fact]
+    public void Ignoring_an_event_does_not_reset_the_time_in_state()
+    {
+        var brain = New();
+        brain.Handle(EventType.NoveltyDetected, S(0));
+        brain.Handle(EventType.HumanLeft, S(20)); // no rule applies → NoAction
+
+        Assert.Equal(BehaviorAction.LoseInterest, brain.Tick(S(30)).Decision!.Action);
+    }
+
+    [Fact]
     public void Interacting_times_out_only_after_the_last_interaction()
     {
         var brain = New();

@@ -124,7 +124,10 @@ public sealed class Brain
     private void Apply(Decision decision)
     {
         StateMachine.EnsureValid(Runtime.State, decision.ToState);
-        if (decision.ChangesState)
+
+        // A deliberate action re-enters its state (e.g. investigating novelty while already curious restarts the
+        // curiosity period); NoAction keeps the current state's clock running.
+        if (decision.ChangesState || decision.Action != BehaviorAction.NoAction)
         {
             Runtime = Runtime with { State = decision.ToState, StateEnteredAt = decision.OccurredAt };
         }

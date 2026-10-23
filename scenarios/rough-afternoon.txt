@@ -1,0 +1,11 @@
+# Mixed interactions: the robot backs off after rough handling and its confidence drops a little.
+00:00:05 HumanInteractionDetected
+00:00:15 PositiveInteraction
+00:00:30 NegativeInteraction
+00:00:45 NegativeInteraction
+00:01:00 HumanLeft
+00:05:00 HumanPresenceDetected
+00:05:10 HumanInteractionDetected
+00:05:20 PositiveInteraction
+00:06:00 InteractionEnded
+00:20:00 wait

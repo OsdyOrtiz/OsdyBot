@@ -62,6 +62,7 @@ Dependencies point inward: `Osdy.Cli` → `Osdy.Persistence.Sqlite` → `Osdy.Co
 | `src/Osdy.Cli` | Console host: `run`, `simulate`, `status`, `events export` | Core, Persistence.Sqlite |
 | `tests/Osdy.Core.Tests` | Unit and simulation tests | Core |
 | `tests/Osdy.Persistence.Sqlite.Tests` | Integration tests on real SQLite files | Core, Persistence.Sqlite |
+| `tests/Osdy.Cli.Tests` | End-to-end CLI tests with fake time and I/O | Cli |
 
 Folders inside `Osdy.Core` are named after the domain (screaming architecture): `Identity/`, `Personality/`, `States/`, `Vitals/`, `Events/`, `Decisions/`, `Experiences/`, `Runtime/`, `Simulation/`.
 

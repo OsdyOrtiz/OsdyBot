@@ -14,7 +14,8 @@
 | Unit | `Osdy.Core.Tests` | Trait math, state transition table, each decision rule, energy, options validation |
 | Simulation | `Osdy.Core.Tests` | Hundreds/thousands of experiences; Robot A vs Robot B divergence; scenario determinism |
 | Integration | `Osdy.Persistence.Sqlite.Tests` | Commit/load round-trip on a temp file; restart recovery; schema version guard |
-| Functional | manual CLI run, recorded in the feature log | `osdy simulate scenarios/first-meeting.txt` matches the expected trace shape |
+| Runtime | `Osdy.Core.Tests` | `BrainRunner` on a `FakeTimeProvider`: ticks, commit-before-notify, shutdown drain, failure reload |
+| CLI end-to-end | `Osdy.Cli.Tests` | `simulate` prints the brief's trace; `--db` survives restarts; `events export` replays; `run` with scripted keys; exit codes |
 
 ## Simulation
 
