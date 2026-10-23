@@ -37,7 +37,7 @@ Assumption A1: user-facing console tags stay as in the example; technical artifa
 | T6 | all | delegated verifier (feature end) | done — 106/106; S1–S8, S10–S15 PASS, S9 PARTIAL (1 blocker: budget window documented as rolling but fixed → docs corrected to the real guarantee ≤ 2× budget at a boundary, worst-case test added, P8 opened); advisories 1–2 fixed with RED→GREEN tests; advisories 3–9 deferred; GREEN 108/108 | `fix:` correction commit |
 
 | T7 | S12, L5 | inline | done — RED: 2 `[STATE]` lines at boot; GREEN 14/14 CLI | see git log `fix(cli)` |
-| T8 | S11, L5 | inline | pending — Reload drops a custom DecisionEngine | |
+| T8 | S11, L5 | inline | done — RED: rule `novelty` instead of custom; GREEN 91/91 core | see git log `fix(core)` |
 | T9 | S8, L5 | inline | pending — status/export open the DB read-only (an empty file gets a schema) | |
 | T10 | S5, L5 | inline | pending — `run` stops reading input when the loop stops after repeated failures | |
 | T11 | S6, L5 | inline | pending — `events export` keeps trailing waits and sub-second offsets | |

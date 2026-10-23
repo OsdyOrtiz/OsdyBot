@@ -156,7 +156,7 @@ public sealed class BrainRunner
         {
             if (_store.Load() is { } snapshot)
             {
-                Brain = Brain.Restore(snapshot, Brain.Options);
+                Brain = Brain.Reload(snapshot);
             }
         }
 #pragma warning disable CA1031 // A broken store is reported; the in-memory brain keeps running.

@@ -112,6 +112,30 @@ public class BrainRunnerTests
     }
 
     [Fact]
+    public async Task Reloading_after_a_failed_commit_keeps_the_brains_decision_engine()
+    {
+        var time = new FakeTimeProvider(T0);
+        var store = new FlakyStore(failures: 1);
+        var brain = Brain.CreateNew(new BrainOptions(), T0, new DecisionEngine([new IgnoreEventsRule()]));
+        store.Inner.Commit(brain.Start(T0));
+        var observer = new RecordingObserver(s => s.Event?.Type == EventType.NoveltyDetected);
+        var runner = new BrainRunner(brain, store, observer, time);
+        using var cts = new CancellationTokenSource();
+
+        var run = runner.RunAsync(cts.Token);
+        await runner.PostAsync(EventType.HumanInteractionDetected, "test"); // commit fails → reload
+        await runner.PostAsync(EventType.NoveltyDetected, "test");
+        var step = await observer.Matched.WaitAsync(Guard);
+        await cts.CancelAsync();
+        await run.WaitAsync(Guard);
+
+        Assert.IsType<IOException>(Assert.Single(observer.Errors));
+        Assert.Equal(IgnoreEventsRule.RuleName, step.Decision!.Rule);
+        Assert.Equal(BehaviorAction.NoAction, step.Decision.Action);
+        Assert.Equal(BrainState.Idle, runner.Brain.Runtime.State);
+    }
+
+    [Fact]
     public async Task Too_many_consecutive_failures_stop_the_loop()
     {
         var time = new FakeTimeProvider(T0);
@@ -147,6 +171,17 @@ public class BrainRunnerTests
         }
 
         public void OnError(Exception exception) => Errors.Enqueue(exception);
+    }
+
+    private sealed class IgnoreEventsRule : IDecisionRule
+    {
+        public const string RuleName = "ignore-events";
+
+        public string Name => RuleName;
+
+        public Choice? Evaluate(DecisionContext context) => context.Event is null
+            ? null
+            : new Choice(DecisionKind.Reactive, BehaviorAction.NoAction, context.State, ["Custom engine ignores events"]);
     }
 
     private sealed class FlakyStore(int failures) : IBrainStore

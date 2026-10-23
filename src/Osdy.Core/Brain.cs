@@ -54,6 +54,9 @@ public sealed class Brain
         return new Brain(options, snapshot with { Personality = personality, Runtime = runtime }, engine ?? DecisionEngine.Default);
     }
 
+    /// <summary>A brain restored from <paramref name="snapshot"/> with this brain's options and decision engine.</summary>
+    public Brain Reload(BrainSnapshot snapshot) => Restore(snapshot, Options, _engine);
+
     /// <summary>
     /// Resumes after a (re)start: downtime counts as rest, and transient states are not resumed.
     /// </summary>
