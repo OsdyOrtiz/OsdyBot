@@ -51,10 +51,10 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
         try
         {
             var version = ReadVersion(connection);
-            if (version == 1)
+            if (version is 1 or 2)
             {
                 throw new InvalidOperationException(
-                    "Database schema version 1 requires migration to version 2. Open it read-write first; read-only access never migrates.");
+                    $"Database schema version {version} requires migration to version {Schema.Version}. Open it read-write first; read-only access never migrates.");
             }
 
             if (version == 0)
@@ -118,10 +118,11 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
             OptionalTime(runtimeReader, 4),
             OptionalTime(runtimeReader, 5));
 
+        // Only learning spends the budget; owner restorations are corrections and never count.
         // Storage does not own LearningOptions. Restore the recorded history up to the snapshot;
         // Brain.Restore prunes it using the caller's BudgetWindow and this runtime timestamp.
         var history = new Dictionary<TraitKind, List<TraitBudgetEntry>>();
-        using (var changesCommand = Command("SELECT trait, occurred_at, ABS(delta) FROM trait_changes ORDER BY seq"))
+        using (var changesCommand = Command("SELECT trait, occurred_at, ABS(delta) FROM trait_changes WHERE kind = 'Learning' ORDER BY seq"))
         using (var reader = changesCommand.ExecuteReader())
         {
             while (reader.Read())
@@ -190,11 +191,12 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
         if (result.Event is { } evt)
         {
             Execute(
-                "INSERT INTO events (id, type, occurred_at, source) VALUES ($id, $type, $at, $source)",
+                "INSERT INTO events (id, type, occurred_at, source, target_id) VALUES ($id, $type, $at, $source, $target)",
                 ("$id", evt.Id.ToString()),
                 ("$type", evt.Type.ToString()),
                 ("$at", Text(evt.OccurredAt)),
-                ("$source", evt.Source));
+                ("$source", evt.Source),
+                ("$target", evt.TargetId?.ToString()));
         }
 
         if (result.Decision is { } d)
@@ -240,8 +242,8 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
         {
             Execute(
                 """
-                INSERT INTO trait_changes (id, occurred_at, trait, old_value, new_value, delta, experience_id, rule)
-                VALUES ($id, $at, $trait, $old, $new, $delta, $experience, $rule)
+                INSERT INTO trait_changes (id, occurred_at, trait, old_value, new_value, delta, experience_id, rule, kind, rollback_target_id)
+                VALUES ($id, $at, $trait, $old, $new, $delta, $experience, $rule, $kind, $target)
                 """,
                 ("$id", c.Id.ToString()),
                 ("$at", Text(c.OccurredAt)),
@@ -250,7 +252,9 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
                 ("$new", c.NewValue),
                 ("$delta", c.Delta),
                 ("$experience", c.ExperienceId.ToString()),
-                ("$rule", c.Rule));
+                ("$rule", c.Rule),
+                ("$kind", c.Kind.ToString()),
+                ("$target", c.RollbackTargetId?.ToString()));
         }
 
         transaction.Commit();
@@ -316,7 +320,7 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
 
     public IReadOnlyList<TraitChange> GetRecentTraitChanges(int count) => Recent(
         "trait_changes",
-        "id, occurred_at, trait, old_value, new_value, delta, experience_id, rule",
+        "id, occurred_at, trait, old_value, new_value, delta, experience_id, rule, kind, rollback_target_id",
         count,
         r => new TraitChange(
             Guid.Parse(r.GetString(0)),
@@ -326,13 +330,17 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
             r.GetDouble(4),
             r.GetDouble(5),
             Guid.Parse(r.GetString(6)),
-            r.GetString(7)));
+            r.GetString(7),
+            Enum.Parse<TraitChangeKind>(r.GetString(8)),
+            r.IsDBNull(9) ? null : Guid.Parse(r.GetString(9))));
 
     public IReadOnlyList<BrainEvent> GetEvents() => Recent(
         "events",
-        "id, type, occurred_at, source",
+        "id, type, occurred_at, source, target_id",
         int.MaxValue,
-        r => new BrainEvent(Guid.Parse(r.GetString(0)), Enum.Parse<EventType>(r.GetString(1)), Time(r.GetString(2)), r.GetString(3)));
+        r => new BrainEvent(
+            Guid.Parse(r.GetString(0)), Enum.Parse<EventType>(r.GetString(1)), Time(r.GetString(2)), r.GetString(3),
+            r.IsDBNull(4) ? null : Guid.Parse(r.GetString(4))));
 
     public MemoryStats GetStats()
     {
@@ -361,7 +369,12 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
         }
 
         using var transaction = _connection.BeginTransaction();
-        Execute(version == 1 ? Schema.MigrateV1ToV2 : Schema.Create);
+        Execute(version switch
+        {
+            0 => Schema.Create,
+            1 => Schema.MigrateV1ToV2 + Schema.MigrateV2ToV3,
+            _ => Schema.MigrateV2ToV3,
+        });
         Execute($"PRAGMA user_version = {Schema.Version};");
         transaction.Commit();
     }
@@ -380,7 +393,7 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
         using var command = connection.CreateCommand();
         command.CommandText = "PRAGMA user_version;";
         var version = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
-        if (version != 0 && version != 1 && version != Schema.Version)
+        if (version is < 0 or > Schema.Version)
         {
             throw new InvalidOperationException(
                 $"Database schema version {version} is not supported (expected {Schema.Version}). Refusing to open it.");

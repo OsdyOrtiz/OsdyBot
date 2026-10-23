@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using Osdy.Core;
 using Osdy.Core.Events;
+using Osdy.Core.Personality;
 using Osdy.Core.Experiences;
 using Osdy.Core.Runtime;
 using Osdy.Core.Simulation;
@@ -39,8 +40,12 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
               Muestra una experiencia, su evento, decisión y cambios de rasgos.
           osdy forget <id> [--db <archivo>]
               Elimina la experiencia y su evento; conserva las acciones y el aprendizaje.
+          osdy rollback <id-de-cambio> [--db <archivo>] [--config <archivo.json>]
+              Deshace ese cambio de rasgo y todos los posteriores en todos los rasgos.
+              Conserva el historial y registra la corrección.
           osdy events export <escenario.txt> [--db <archivo>]
               Exporta los eventos guardados al formato de escenario para reproducirlos.
+              Falla si hay solicitudes de rollback: usá 'osdy export'.
           osdy export <archivo.json> [--db <archivo>]
               Exporta toda la memoria guardada a JSON sin modificar la base de datos.
 
@@ -80,6 +85,7 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
                 "memories" when command.Positional is ["list"] => Memories(command, null),
                 "memories" when command.Positional is ["show", var id] => Memories(command, MemoryId(id)),
                 "forget" when command.Positional is [var id] => Forget(command, MemoryId(id)),
+                "rollback" when command.Positional is [var id] => Rollback(command, ChangeId(id)),
                 "help" or "--help" or "-h" => Help(),
                 _ => UsageError($"Comando no válido: {string.Join(' ', args)}"),
             };
@@ -321,6 +327,72 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
         return Ok;
     }
 
+    private static Guid ChangeId(string text) => Guid.TryParse(text, out var id)
+        ? id : throw new ArgumentException($"Id de cambio no válido: {text}");
+
+    private int Rollback(Arguments command, Guid target)
+    {
+        if (!File.Exists(command.Database))
+        {
+            error.WriteLine($"[ERROR] No existe la base de datos {command.Database}");
+            return Failure;
+        }
+
+        var options = LoadOptions(command);
+        var now = time.GetUtcNow();
+        // Dry run on a read-only copy of the state: unknown targets and values the current options cannot hold are
+        // rejected before anything is opened for writing.
+        using (var readOnly = SqliteBrainStore.OpenReadOnly(command.Database))
+        {
+            if (readOnly?.Load() is not { } snapshot)
+            {
+                error.WriteLine($"[ERROR] No hay ningún cerebro guardado en {command.Database}");
+                return Failure;
+            }
+
+            var stored = readOnly.GetRecentTraitChanges(int.MaxValue);
+            if (stored.All(c => c.Id != target))
+            {
+                error.WriteLine($"[ERROR] No existe el cambio de rasgo {target}");
+                return Failure;
+            }
+
+            Brain.Restore(snapshot, options).Rollback(BrainEvent.Create(EventType.OwnerRollbackRequested, now, "cli", target), stored);
+            if (SavedValueOutsideOptions(snapshot, options) is { } misfit)
+            {
+                error.WriteLine(misfit);
+                return Failure;
+            }
+        }
+
+        using var store = new SqliteBrainStore(command.Database);
+        // No startup step: a rollback commits exactly one step and leaves the runtime state untouched.
+        var saved = store.Load()!;
+        if (SavedValueOutsideOptions(saved, options) is { } outside)
+        {
+            error.WriteLine(outside);
+            return Failure;
+        }
+
+        var brain = Brain.Restore(saved, options);
+        var step = brain.Rollback(BrainEvent.Create(EventType.OwnerRollbackRequested, now, "cli", target), store.GetRecentTraitChanges(int.MaxValue));
+        store.Commit(step);
+        output.WriteLine($"[ROLLBACK] Personalidad restaurada a antes del cambio {target}; historial conservado, {step.TraitChanges.Count} rasgos corregidos.");
+        foreach (var change in step.TraitChanges)
+        {
+            output.WriteLine($"[TRAIT] {change.Trait}: {change.OldValue.ToString("0.0000", CultureInfo.InvariantCulture)} -> {change.NewValue.ToString("0.0000", CultureInfo.InvariantCulture)}");
+        }
+
+        return Ok;
+    }
+
+    /// <summary>Rollback never clamps: a saved value the current options cannot hold is reported, not rewritten.</summary>
+    private static string? SavedValueOutsideOptions(BrainSnapshot snapshot, BrainOptions options) =>
+        PersonalityRollback.FirstOutOfBounds(snapshot.Personality, options.Personality) is { } trait
+            ? $"[ERROR] El valor guardado de {trait.Kind} ({trait.Value.ToString("0.0000", CultureInfo.InvariantCulture)}) no cabe en la configuración actual "
+              + $"({options.Personality.TraitMin.ToString(CultureInfo.InvariantCulture)}..{options.Personality.TraitMax.ToString(CultureInfo.InvariantCulture)}); el rollback no recorta valores."
+            : null;
+
     private int UnknownMemory(Guid id)
     {
         error.WriteLine($"[ERROR] No existe la experiencia {id}");
@@ -385,6 +457,13 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
 
         using var store = SqliteBrainStore.OpenReadOnly(command.Database);
         var events = store?.GetEvents() ?? [];
+        if (events.Any(e => e.Type == EventType.OwnerRollbackRequested))
+        {
+            // A scenario line cannot carry a rollback target, so a partial export would replay different learning.
+            error.WriteLine("[ERROR] La base de datos contiene solicitudes de rollback que un escenario no puede reproducir; usá 'osdy export <archivo.json>' para conservar el registro completo.");
+            return Failure;
+        }
+
         if (events.Count == 0)
         {
             error.WriteLine("[ERROR] No hay eventos guardados para exportar");
@@ -404,6 +483,7 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
             path,
             $"# Exported from {command.Database}; first event at {first.ToString("O", CultureInfo.InvariantCulture)}\n" + ScenarioParser.Format(entries));
         output.WriteLine($"[EVENTS] {events.Count} eventos exportados a {path}");
+
         return Ok;
     }
 

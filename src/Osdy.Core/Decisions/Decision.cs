@@ -37,6 +37,7 @@ public enum BehaviorAction
     Rest,
     WakeUp,
     RecoverAfterRestart,
+    RestorePersonality,
 }
 
 /// <summary>What the brain chose, why, and the state transition it caused.</summary>

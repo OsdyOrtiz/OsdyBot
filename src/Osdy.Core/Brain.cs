@@ -1,3 +1,4 @@
+using System.Globalization;
 using Osdy.Core.Decisions;
 using Osdy.Core.Decisions.Rules;
 using Osdy.Core.Events;
@@ -15,6 +16,8 @@ namespace Osdy.Core;
 /// </summary>
 public sealed class Brain
 {
+    public const string RollbackRule = "owner-rollback";
+
     private readonly DecisionEngine _engine;
 
     private Brain(BrainOptions options, BrainSnapshot snapshot, DecisionEngine engine)
@@ -95,6 +98,11 @@ public sealed class Brain
 
     public StepResult Handle(BrainEvent evt)
     {
+        if (evt.Type == EventType.OwnerRollbackRequested)
+        {
+            throw new ArgumentException("Owner rollbacks need the stored trait history; use Rollback.", nameof(evt));
+        }
+
         var now = Monotonic(evt.OccurredAt);
         AdvanceVitals(now);
         if (evt.IsInteraction)
@@ -113,6 +121,55 @@ public sealed class Brain
         }
 
         return Result(now, DecisionTrigger.Event, evt, decision, experience, changes);
+    }
+
+    /// <summary>
+    /// Undoes the target trait change and every later one, across the whole profile, by restoring the values recorded
+    /// immediately before it. <paramref name="history"/> is the stored trait changes in persistence order.
+    /// </summary>
+    public StepResult Rollback(BrainEvent request, IReadOnlyList<TraitChange> history)
+    {
+        if (request is not { Type: EventType.OwnerRollbackRequested, TargetId: { } target })
+        {
+            throw new ArgumentException("A rollback needs an OwnerRollbackRequested event that names its target change.", nameof(request));
+        }
+
+        // Plan and validate everything first: a rejected rollback leaves the brain untouched.
+        var now = Monotonic(request.OccurredAt);
+        var restoredValues = PersonalityRollback.ValuesBefore(history, target);
+        var experienceId = Guid.CreateVersion7(now);
+        var personality = Personality;
+        var changes = new List<TraitChange>();
+        foreach (var (kind, value) in restoredValues)
+        {
+            var before = personality[kind];
+            var update = TraitEvolution.Apply(before, value, Options.Personality);
+            personality = personality.With(update.Trait);
+            if (update.Delta != 0)
+            {
+                changes.Add(new TraitChange(
+                    Guid.CreateVersion7(now), now, kind, before.Value, update.Trait.Value, update.Delta,
+                    experienceId, RollbackRule, TraitChangeKind.Restoration, target));
+            }
+        }
+
+        AdvanceVitals(now);
+        Personality = personality;
+
+        // The state machine is not involved: the decision keeps the current state and its clock.
+        var summary = changes.Count == 0
+            ? "Profile was already at those values; nothing to restore"
+            : $"Restored {string.Join(", ", changes.Select(c => $"{c.Trait} {c.OldValue.ToString("0.0000", CultureInfo.InvariantCulture)} -> {c.NewValue.ToString("0.0000", CultureInfo.InvariantCulture)}"))}";
+        var choice = new Choice(
+            DecisionKind.Reactive,
+            BehaviorAction.RestorePersonality,
+            Runtime.State,
+            [$"Owner asked to undo trait change {target} and every later change", summary]);
+        var decision = DecisionEngine.Stamp(Context(now, request), DecisionTrigger.Event, RollbackRule, choice);
+        var experience = new Experience(
+            experienceId, now, request.Id, decision.Id, ExperienceKind.OwnerRollback, Runtime.State,
+            decision.Action, 0, 0, $"Rolled back to before trait change {target}", request.Source);
+        return Result(now, DecisionTrigger.Event, request, decision, experience, changes);
     }
 
     public StepResult Tick(DateTimeOffset now)

@@ -46,7 +46,12 @@ public static class ScenarioParser
             {
                 if (!Enum.TryParse<EventType>(parts[1], ignoreCase: false, out var parsed) || !Enum.IsDefined(parsed))
                 {
-                    throw Error(i, $"unknown event '{parts[1]}'. Valid: {string.Join(", ", Enum.GetNames<EventType>())}, {WaitKeyword}");
+                    throw Error(i, $"unknown event '{parts[1]}'. Valid: {string.Join(", ", Enum.GetNames<EventType>().Where(n => n != nameof(EventType.OwnerRollbackRequested)))}, {WaitKeyword}");
+                }
+
+                if (parsed == EventType.OwnerRollbackRequested)
+                {
+                    throw Error(i, $"'{parts[1]}' needs a stored target and cannot be replayed from a scenario");
                 }
 
                 evt = parsed;

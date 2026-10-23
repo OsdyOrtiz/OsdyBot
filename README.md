@@ -46,7 +46,8 @@ Expected output (abridged):
 | `osdy status [--db <file>] [--count <n>]` | Identity, traits vs. baseline, state, energy, and the latest decisions (with reasons), experiences and trait changes. |
 | `osdy memories list [--db <file>] [--count <n>]` | Lists the latest experiences (default 10), oldest first, without modifying the database. |
 | `osdy memories show <id> [--db <file>]` | Inspects an experience, its event, decision and trait changes, read-only. |
-| `osdy forget <id> [--db <file>]` | Atomically deletes an experience and its event; keeps decisions and learned trait changes as tombstones. Does not undo learning. |
+| `osdy forget <id> [--db <file>]` | Atomically deletes an experience and its event; keeps decisions and learned trait changes as tombstones. Does not undo learning (see `rollback`). |
+| `osdy rollback <change-id> [--db <file>] [--config <file.json>]` | Undoes that trait change and every later one across all traits, restoring the exact values from just before it. Keeps all history and records the correction; learning budget unchanged. `events export` refuses databases with rollbacks (use `osdy export`). |
 | `osdy events export <scenario.txt> [--db <file>]` | Exports stored events to the scenario format so they can be replayed. |
 | `osdy export <file.json> [--db <file>]` | Exports all saved memory as [versioned JSON](docs/memory-and-persistence.md#json-export-format-version-1), opening the database read-only. Requires a new output file. |
 

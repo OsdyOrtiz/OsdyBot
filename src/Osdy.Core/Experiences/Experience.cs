@@ -9,6 +9,7 @@ public enum ExperienceKind
     PositiveInteraction,
     NegativeInteraction,
     NoveltyExplored,
+    OwnerRollback,
 }
 
 /// <summary>
@@ -27,7 +28,19 @@ public sealed record Experience(
     string Outcome,
     string Source);
 
-/// <summary>A recorded trait change, always linked to the experience and rule that caused it.</summary>
+public enum TraitChangeKind
+{
+    /// <summary>Bounded learning from an experience; it spends the sliding budget.</summary>
+    Learning,
+
+    /// <summary>Owner correction that restores recorded values; it never spends the learning budget.</summary>
+    Restoration,
+}
+
+/// <summary>
+/// A recorded trait change, always linked to the experience and rule that caused it. A restoration also names the
+/// change the owner rolled back to.
+/// </summary>
 public sealed record TraitChange(
     Guid Id,
     DateTimeOffset OccurredAt,
@@ -36,4 +49,6 @@ public sealed record TraitChange(
     double NewValue,
     double Delta,
     Guid ExperienceId,
-    string Rule);
+    string Rule,
+    TraitChangeKind Kind = TraitChangeKind.Learning,
+    Guid? RollbackTargetId = null);

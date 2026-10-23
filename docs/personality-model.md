@@ -71,6 +71,10 @@ Worked example (matches the brief): Confidence 0.40, one positive interaction (`
 5. **Monotone under consistent experience:** only positive experiences never decrease a positively-gained trait.
 6. **Divergence without identity loss:** two instances with the same start but different histories diverge, while absolute movement in every sliding window stays ≤ `BudgetPerWindow`. Over elapsed time `T ≥ 0` since initialization, displacement from baseline is at most `(floor(T / BudgetWindow) + 1) × BudgetPerWindow`, as well as being bounded by the trait limits. Both movement directions consume the same budget.
 
+## Owner corrections vs learning bounds
+
+`osdy rollback` (ADR-018) is not learning, so properties 1-6 describe `Learning` changes only. A correction restores exact recorded values through `TraitEvolution.Apply` (a separate overload: no headroom, `MaxStep` or budget), still rejects values outside `TraitMin..TraitMax`, and is recorded as a `Restoration` change. Restorations are excluded from the sliding budget: the original learning stays spent and the compensation costs nothing, so a rollback neither refunds budget nor consumes it. The movement bound therefore holds for learning in every window, while an owner correction may move a trait by more than `BudgetPerWindow`, because it only returns it to a value it already held. Affect and vitals still never write traits (invariant 6).
+
 ## Measuring evolution
 
 | What we measure | How | Distinguishes |

@@ -353,6 +353,181 @@ public sealed class CliAppTests : IDisposable
         Assert.Equal(before, File.ReadAllBytes(Db));
     }
 
+    private const string CuriousConfig = """{ "personality": { "initialCuriosity": 0.9 } }""";
+
+    private (Osdy.Core.Experiences.TraitChange[] Changes, Osdy.Core.Runtime.MemoryStats Stats) Stored()
+    {
+        using var store = Osdy.Persistence.Sqlite.SqliteBrainStore.OpenReadOnly(Db)!;
+        return (store.GetRecentTraitChanges(100).ToArray(), store.GetStats());
+    }
+
+    [Fact]
+    public async Task Rollback_restores_the_profile_before_the_change_keeping_history_and_logging_the_correction()
+    {
+        await Run("simulate", Write("meeting.txt", Meeting), "--db", Db);
+        var (changes, stats) = Stored();
+        var target = changes[0];
+
+        var result = await Run("rollback", target.Id.ToString(), "--db", Db);
+
+        Assert.Equal(CliApp.Ok, result.ExitCode);
+        Assert.Empty(result.Error);
+        Assert.Contains($"[ROLLBACK] Personalidad restaurada a antes del cambio {target.Id}", result.Output, StringComparison.Ordinal);
+        using var store = Osdy.Persistence.Sqlite.SqliteBrainStore.OpenReadOnly(Db)!;
+        var snapshot = store.Load()!;
+        foreach (var trait in snapshot.Personality.Traits)
+        {
+            Assert.Equal(changes.First(c => c.Trait == trait.Kind).OldValue, trait.Value);
+        }
+
+        var after = store.GetRecentTraitChanges(100);
+        Assert.Equal(changes, after.Take(changes.Length)); // history is kept as it was
+        var restorations = after.Skip(changes.Length).ToArray();
+        Assert.NotEmpty(restorations);
+        Assert.All(restorations, c =>
+        {
+            Assert.Equal(Osdy.Core.Experiences.TraitChangeKind.Restoration, c.Kind);
+            Assert.Equal(target.Id, c.RollbackTargetId);
+        });
+        Assert.Equal(stats with
+        {
+            Events = stats.Events + 1,
+            Decisions = stats.Decisions + 1,
+            Experiences = stats.Experiences + 1,
+            TraitChanges = stats.TraitChanges + restorations.Length,
+        }, store.GetStats());
+        var request = store.GetEvents()[^1];
+        Assert.Equal((Osdy.Core.Events.EventType.OwnerRollbackRequested, target.Id, "cli"), (request.Type, request.TargetId, request.Source));
+        var experience = store.GetRecentExperiences(1)[0];
+        Assert.Equal((Osdy.Core.Experiences.ExperienceKind.OwnerRollback, request.Id), (experience.Kind, experience.EventId));
+        Assert.Equal("owner-rollback", store.GetRecentDecisions(1)[0].Rule);
+        // Compensation is not learning: the learning budget still holds exactly the original changes.
+        Assert.All(snapshot.Personality.Traits, t => Assert.Equal(
+            changes.Count(c => c.Trait == t.Kind), t.RecentChanges.Count));
+    }
+
+    [Fact]
+    public async Task Rollback_works_after_the_source_memory_was_forgotten_and_export_keeps_the_audit_links()
+    {
+        await Run("simulate", Write("meeting.txt", Meeting), "--db", Db);
+        var (changes, _) = Stored();
+        var target = changes[0];
+        await Run("forget", target.ExperienceId.ToString(), "--db", Db);
+
+        var rollback = await Run("rollback", target.Id.ToString(), "--db", Db);
+        var path = Path.Combine(_directory, "after.json");
+        var export = await Run("export", path, "--db", Db);
+
+        Assert.Equal(CliApp.Ok, rollback.ExitCode);
+        Assert.Equal(CliApp.Ok, export.ExitCode);
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        var root = document.RootElement;
+        var request = root.GetProperty("events").EnumerateArray().Single(e => e.GetProperty("type").GetString() == "OwnerRollbackRequested");
+        Assert.Equal(target.Id, request.GetProperty("targetId").GetGuid());
+        var exported = root.GetProperty("traitChanges").EnumerateArray().ToArray();
+        Assert.All(exported.Take(changes.Length), c =>
+        {
+            Assert.Equal("Learning", c.GetProperty("kind").GetString());
+            Assert.Equal(JsonValueKind.Null, c.GetProperty("rollbackTargetId").ValueKind);
+        });
+        Assert.All(exported.Skip(changes.Length), c =>
+        {
+            Assert.Equal("Restoration", c.GetProperty("kind").GetString());
+            Assert.Equal(target.Id, c.GetProperty("rollbackTargetId").GetGuid());
+        });
+    }
+
+    [Theory]
+    [InlineData("unknown")]
+    [InlineData("incompatible")]
+    public async Task Rejected_rollbacks_leave_the_database_bytes_unchanged(string reason)
+    {
+        var config = Write("curious.json", CuriousConfig);
+        await Run("simulate", Write("meeting.txt", Meeting), "--db", Db, "--config", config);
+        var (changes, _) = Stored();
+        var id = reason == "unknown" ? Guid.NewGuid() : changes.First(c => c.Trait == Osdy.Core.Personality.TraitKind.Curiosity).Id;
+        var narrow = Write("narrow.json", """{ "personality": { "traitMax": 0.8, "initialCuriosity": 0.7 } }""");
+        var before = File.ReadAllBytes(Db);
+
+        var result = await Run("rollback", id.ToString(), "--db", Db, "--config", narrow);
+
+        Assert.Equal(CliApp.Failure, result.ExitCode);
+        Assert.Empty(result.Output);
+        Assert.Contains(reason == "unknown" ? $"No existe el cambio de rasgo {id}" : "bounds", result.Error, StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllBytes(Db));
+    }
+
+    [Fact]
+    public async Task Rollback_rejects_a_saved_profile_that_does_not_fit_the_current_options_instead_of_clamping_it()
+    {
+        var config = Write("curious.json", CuriousConfig);
+        await Run("simulate", Write("positive.txt", "00:00:05 HumanInteractionDetected\n00:00:20 PositiveInteraction\n"), "--db", Db, "--config", config);
+        var (changes, _) = Stored();
+        var confidence = changes.First(c => c.Trait == Osdy.Core.Personality.TraitKind.Confidence);
+        Assert.DoesNotContain(changes, c => c.Trait == Osdy.Core.Personality.TraitKind.Curiosity);
+        var narrow = Write("narrow.json", """{ "personality": { "traitMax": 0.8, "initialCuriosity": 0.7 } }""");
+        var before = System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(Db));
+
+        var result = await Run("rollback", confidence.Id.ToString(), "--db", Db, "--config", narrow);
+
+        Assert.Equal(CliApp.Failure, result.ExitCode);
+        Assert.Empty(result.Output);
+        Assert.Equal(
+            $"[ERROR] El valor guardado de Curiosity (0.9000) no cabe en la configuración actual (0.05..0.8); el rollback no recorta valores.{Environment.NewLine}",
+            result.Error);
+        Assert.Equal(before, System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(Db)));
+    }
+
+    [Fact]
+    public async Task Rollback_of_a_missing_database_fails_without_creating_one()
+    {
+        var result = await Run("rollback", Guid.NewGuid().ToString(), "--db", Db);
+
+        Assert.Equal(CliApp.Failure, result.ExitCode);
+        Assert.StartsWith("[ERROR] No existe la base de datos", result.Error, StringComparison.Ordinal);
+        Assert.False(File.Exists(Db));
+    }
+
+    [Fact]
+    public async Task Event_export_is_rejected_when_rollback_requests_exist_and_scenarios_refuse_to_replay_them()
+    {
+        await Run("simulate", Write("meeting.txt", Meeting), "--db", Db);
+        var (changes, _) = Stored();
+        await Run("rollback", changes[0].Id.ToString(), "--db", Db);
+        var exported = Path.Combine(_directory, "events.txt");
+
+        var export = await Run("events", "export", exported, "--db", Db);
+        var replay = await Run("simulate", Write("rollback.txt", "00:00:05 OwnerRollbackRequested"));
+
+        Assert.Equal(CliApp.Failure, export.ExitCode);
+        Assert.Empty(export.Output);
+        Assert.Equal(
+            $"[ERROR] La base de datos contiene solicitudes de rollback que un escenario no puede reproducir; usá 'osdy export <archivo.json>' para conservar el registro completo.{Environment.NewLine}",
+            export.Error);
+        Assert.False(File.Exists(exported));
+        Assert.Equal(CliApp.Failure, replay.ExitCode);
+        Assert.StartsWith("[ERROR] Scenario line 1: 'OwnerRollbackRequested' needs a stored target", replay.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Rollback_commits_only_its_own_step_and_keeps_a_transient_state()
+    {
+        await Run(["run", "--db", Db], input: "h\n+\nq\n");
+        var (changes, stats) = Stored();
+        var before = await Run("status", "--db", Db);
+        Assert.Contains("[STATE] Interacting", before.Output, StringComparison.Ordinal);
+
+        var result = await Run("rollback", changes[0].Id.ToString(), "--db", Db);
+
+        Assert.Equal(CliApp.Ok, result.ExitCode);
+        var status = await Run("status", "--db", Db);
+        Assert.Contains("[STATE] Interacting", status.Output, StringComparison.Ordinal);
+        using var store = Osdy.Persistence.Sqlite.SqliteBrainStore.OpenReadOnly(Db)!;
+        Assert.Equal(stats.Decisions + 1, store.GetStats().Decisions);
+        Assert.DoesNotContain(store.GetRecentDecisions(100), d => d.Action == Osdy.Core.Decisions.BehaviorAction.RecoverAfterRestart);
+    }
+
+
     private static string MemoryLine(Osdy.Core.Experiences.Experience memory) =>
         $"[MEMORY] {memory.Id} {memory.OccurredAt.ToString("u", CultureInfo.InvariantCulture)} {memory.Kind} valence {memory.Valence.ToString("+0.00;-0.00", CultureInfo.InvariantCulture)}: {memory.Outcome}{Environment.NewLine}";
 
@@ -435,6 +610,8 @@ public sealed class CliAppTests : IDisposable
     [InlineData(new[] { "forget" }, "Comando no válido: forget")]
     [InlineData(new[] { "forget", "invalid" }, "Id de experiencia no válido: invalid")]
     [InlineData(new[] { "memories", "show", "invalid" }, "Id de experiencia no válido: invalid")]
+    [InlineData(new[] { "rollback", "invalid" }, "Id de cambio no válido: invalid")]
+    [InlineData(new[] { "rollback" }, "Comando no válido: rollback")]
     [InlineData(new[] { "memories", "list", "--count", "0" }, "--count debe ser un entero positivo.")]
     [InlineData(new string[0], "Falta el comando.")]
     [InlineData(new[] { "status", "--db" }, "Falta el valor de --db.")]

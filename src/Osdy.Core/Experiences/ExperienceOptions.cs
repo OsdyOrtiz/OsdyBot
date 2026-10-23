@@ -38,7 +38,8 @@ public sealed record ExperienceOptions
     public IReadOnlyList<string> Validate()
     {
         var errors = new List<string>();
-        foreach (var kind in Enum.GetValues<ExperienceKind>())
+        // Owner rollbacks are corrections, not interpretations: they are never appraised or learned from.
+        foreach (var kind in Enum.GetValues<ExperienceKind>().Where(k => k != ExperienceKind.OwnerRollback))
         {
             if (!Appraisals.TryGetValue(kind, out var appraisal))
             {

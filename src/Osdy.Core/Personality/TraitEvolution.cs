@@ -51,4 +51,19 @@ public static class TraitEvolution
         };
         return new TraitUpdate(updated, applied);
     }
+
+    /// <summary>
+    /// Owner correction: assigns a recorded value exactly. It bypasses learning attenuation and neither reads nor
+    /// spends the sliding budget, but still refuses values outside the current bounds.
+    /// </summary>
+    public static TraitUpdate Apply(TraitState trait, double restoredValue, PersonalityOptions bounds)
+    {
+        if (!(restoredValue >= bounds.TraitMin && restoredValue <= bounds.TraitMax))
+        {
+            throw new InvalidOperationException(
+                $"Recorded {trait.Kind} value {restoredValue.ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture)} is outside the current bounds [{bounds.TraitMin}, {bounds.TraitMax}].");
+        }
+
+        return new TraitUpdate(trait with { Value = restoredValue }, restoredValue - trait.Value);
+    }
 }

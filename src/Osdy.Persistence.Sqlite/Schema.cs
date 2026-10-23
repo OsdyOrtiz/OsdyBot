@@ -1,13 +1,20 @@
 namespace Osdy.Persistence.Sqlite;
 
-/// <summary>Schema version 2. See docs/memory-and-persistence.md.</summary>
+/// <summary>Schema version 3. See docs/memory-and-persistence.md.</summary>
 internal static class Schema
 {
-    public const int Version = 2;
+    public const int Version = 3;
 
     public const string MigrateV1ToV2 = """
         ALTER TABLE traits DROP COLUMN budget_window_start;
         ALTER TABLE traits DROP COLUMN budget_used;
+        """;
+
+    /// <summary>Adds rollback metadata; every pre-existing trait change is learning by definition.</summary>
+    public const string MigrateV2ToV3 = """
+        ALTER TABLE events ADD COLUMN target_id TEXT;
+        ALTER TABLE trait_changes ADD COLUMN kind TEXT NOT NULL DEFAULT 'Learning';
+        ALTER TABLE trait_changes ADD COLUMN rollback_target_id TEXT;
         """;
 
     public const string Create = """
@@ -38,7 +45,8 @@ internal static class Schema
             id TEXT NOT NULL UNIQUE,
             type TEXT NOT NULL,
             occurred_at TEXT NOT NULL,
-            source TEXT NOT NULL
+            source TEXT NOT NULL,
+            target_id TEXT
         );
 
         CREATE TABLE decisions (
@@ -79,7 +87,9 @@ internal static class Schema
             new_value REAL NOT NULL,
             delta REAL NOT NULL,
             experience_id TEXT NOT NULL,
-            rule TEXT NOT NULL
+            rule TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'Learning',
+            rollback_target_id TEXT
         );
 
         CREATE INDEX ix_trait_changes_experience ON trait_changes (experience_id);

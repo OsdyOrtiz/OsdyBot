@@ -11,29 +11,32 @@
 
 Every experience stores context (state, action), importance, date, source and links to its event and decision. Trait changes link to their experience, which makes any adaptation explainable by a join while the experience exists; after forgetting, that ID remains as a tombstone (ADR-017).
 
-## SQLite schema (version 2)
+## SQLite schema (version 3)
 
 ```sql
 identity      (id TEXT PRIMARY KEY, name TEXT, created_at TEXT)
 traits        (kind TEXT PRIMARY KEY, value REAL, baseline REAL)
 runtime_state (id INTEGER PRIMARY KEY CHECK (id = 1), state TEXT, state_entered_at TEXT,
                energy REAL, last_updated_at TEXT, last_spontaneous_at TEXT, last_interaction_at TEXT)
-events        (seq INTEGER PRIMARY KEY, id TEXT UNIQUE, type TEXT, occurred_at TEXT, source TEXT)
+events        (seq INTEGER PRIMARY KEY, id TEXT UNIQUE, type TEXT, occurred_at TEXT, source TEXT,
+               target_id TEXT)
 decisions     (seq INTEGER PRIMARY KEY, id TEXT UNIQUE, occurred_at TEXT, trigger TEXT, event_id TEXT,
                kind TEXT, rule TEXT, action TEXT, from_state TEXT, to_state TEXT, reasons TEXT)
 experiences   (seq INTEGER PRIMARY KEY, id TEXT UNIQUE, occurred_at TEXT, event_id TEXT, decision_id TEXT,
                kind TEXT, state TEXT, action TEXT, valence REAL, importance REAL, outcome TEXT, source TEXT)
 trait_changes (seq INTEGER PRIMARY KEY, id TEXT UNIQUE, occurred_at TEXT, trait TEXT, old_value REAL,
-               new_value REAL, delta REAL, experience_id TEXT, rule TEXT)
+               new_value REAL, delta REAL, experience_id TEXT, rule TEXT,
+               kind TEXT NOT NULL DEFAULT 'Learning', rollback_target_id TEXT)
 ```
 
 - Enums are stored as names, timestamps as ISO 8601 round-trip strings, `reasons` as a JSON array.
 - `seq` gives a stable insertion order independent of clock precision.
 - Schema version lives in `PRAGMA user_version`. Versions are checked before any write, including journal-mode changes; unknown newer versions are refused untouched.
 - Opening v1 read-write explicitly migrates to v2: both obsolete `traits.budget_window_start` and `traits.budget_used` columns are dropped and `user_version` is advanced in one transaction. All rows and remaining values are preserved.
-- `trait_changes` is the single source of truth for budget history. `Load()` rebuilds per-trait entries from `occurred_at` and `ABS(delta)` up to the stored runtime `last_updated_at`. Storage has no learning options, so it loads the recorded history; `Brain.Restore` retains only entries in `(last_updated_at - BudgetWindow, last_updated_at]` using the caller's options. Learning prunes again at each experience's time.
+- Opening v2 read-write migrates to v3 in one transaction: `events.target_id` and `trait_changes.rollback_target_id` are added as `NULL`, `trait_changes.kind` as `'Learning'` for every existing row. A v1 file runs both migrations in order. Nothing else changes.
+- `trait_changes` is the single source of truth for budget history. `Load()` rebuilds per-trait entries from `occurred_at` and `ABS(delta)` of `kind = 'Learning'` rows only, up to the stored runtime `last_updated_at`. Storage has no learning options, so it loads the recorded history; `Brain.Restore` retains only entries in `(last_updated_at - BudgetWindow, last_updated_at]` using the caller's options. Learning prunes again at each experience's time.
 - WAL journal mode for crash safety.
-- Inspection commands (`osdy status`, `osdy memories list/show`, `osdy events export`, `osdy export`) open the file read-only: they never create a schema, change the journal mode or write anything, even to an empty file. A v1 file is refused with guidance to open it read-write first for migration; no legacy read path is maintained.
+- Inspection commands (`osdy status`, `osdy memories list/show`, `osdy events export`, `osdy export`) open the file read-only: they never create a schema, change the journal mode or write anything, even to an empty file. A v1 or v2 file is refused with guidance to open it read-write first for migration (`run`, `simulate` or a write command such as `rollback` after one of them); no legacy read path is maintained.
 
 ## Write strategy
 
@@ -54,10 +57,10 @@ The output is one UTF-8 JSON document. Property names are English camelCase; enu
 | `identity` | `id`, `name`, `createdAt` |
 | `traits` | Array of `kind`, `value`, `baseline` |
 | `runtime` | `state`, `energy`, `stateEnteredAt`, `lastUpdatedAt`, nullable `lastSpontaneousAt` and `lastInteractionAt` |
-| `events` | Array of `id`, `type`, `occurredAt`, `source` |
+| `events` | Array of `id`, `type`, `occurredAt`, `source`, nullable `targetId` (set on `OwnerRollbackRequested`) |
 | `decisions` | Array of `id`, `occurredAt`, `trigger`, nullable `eventId`, `kind`, `rule`, `action`, `fromState`, `toState`, `reasons` (string array) |
 | `experiences` | Array of `id`, `occurredAt`, `eventId`, `decisionId`, `kind`, `state`, `action`, `valence`, `importance`, `outcome`, `source` |
-| `traitChanges` | Array of `id`, `occurredAt`, `trait`, `oldValue`, `newValue`, `delta`, `experienceId`, `rule` |
+| `traitChanges` | Array of `id`, `occurredAt`, `trait`, `oldValue`, `newValue`, `delta`, `experienceId`, `rule`, `kind` (`Learning` or `Restoration`), nullable `rollbackTargetId` |
 
 Shape example with empty history arrays:
 
@@ -90,17 +93,29 @@ Shape example with empty history arrays:
 }
 ```
 
-## Privacy and control (v0.2; inspection, export and deletion implemented)
+Rollback metadata was added as optional fields, so `schemaVersion` stays `1`: readers that ignore unknown properties keep working, and rows from before rollback simply carry `kind: "Learning"` and `null` targets.
+
+## Privacy and control (v0.2; inspection, export, deletion and rollback implemented)
 
 | Need | Mechanism |
 |------|-----------|
 | Control what is stored | Per-event-type recording policy in options (allowlist) |
 | Inspect | `osdy memories list [--db <file>] [--count <n>]` lists the latest experiences (default 10), oldest first, with ID, time, kind, valence and outcome. `osdy memories show <id> [--db <file>]` includes the event, decision reasons and trait changes. Both open read-only. |
-| Correct | Mark an experience as invalid; its trait changes are reverted by replaying the change log |
+| Correct | `osdy rollback <change-id> [--db <file>] [--config <file.json>]` undoes that trait change and every later one, across all traits, and records the correction (below) |
 | Export | `osdy export <file.json> [--db <file>]` → JSON snapshot and all history rows (format above) |
 | Delete | `osdy forget <id> [--db <file>]` deletes the experience and its event in one transaction. Decisions remain with `event_id = NULL`; trait changes retain `experience_id` as a tombstone. Trait values and restart budget history do not change (ADR-017). |
 | Protect | File permissions `0600`; encryption at rest is a pending decision before any camera/voice data (v0.5) |
 
-Unknown experience IDs fail with exit code 1 and `[ERROR] No existe la experiencia <id>` without changing stored data. Successful deletion prints `[MEMORY] Experiencia <id> y evento <event-id> eliminados; aprendizaje conservado.` and exits with code 0. `status` marks missing experience links as `experiencia <id> (olvidada)`; inspection uses the same trait-change rendering. Forgotten experiences cannot be shown. Export omits the deleted fact and interpretation, retaining decisions and tombstone change records. Forgetting is not learning rollback (US-14).
+Unknown experience IDs fail with exit code 1 and `[ERROR] No existe la experiencia <id>` without changing stored data. Successful deletion prints `[MEMORY] Experiencia <id> y evento <event-id> eliminados; aprendizaje conservado.` and exits with code 0. `status` marks missing experience links as `experiencia <id> (olvidada)`; inspection uses the same trait-change rendering. Forgotten experiences cannot be shown. Export omits the deleted fact and interpretation, retaining decisions and tombstone change records. Forgetting is not learning rollback (see Rollback semantics).
+
+### Rollback semantics (ADR-018)
+
+- **Target and order.** The target is a trait-change ID. "Later" means later in persisted order (`seq`), never by timestamp: changes from one experience, or from different events at the same instant, tie on time. Any change can be a target, including a `Restoration` (which undoes that earlier rollback).
+- **What is restored.** For each trait touched by the target or any later change, the `old_value` recorded by its first such change: the exact value immediately before the target in persisted order. Traits not touched keep their value. Recorded endpoints are used, not inverse deltas, so clamping and attenuation cannot drift the result. A value the current options cannot hold (outside `TraitMin..TraitMax`) rejects the whole rollback. The same holds for the saved profile: rollback never clamps, so any saved trait outside the current bounds rejects it (exit 1, `[ERROR] El valor guardado de <trait> (<valor>) no cabe en la configuración actual (<min>..<max>); el rollback no recorta valores.`, no write). `run` and `simulate` keep their existing clamp on load.
+- **Audit chain.** `OwnerRollbackRequested` event (`source` `cli`, `target_id`) → decision (`owner-rollback`, action `RestorePersonality`, reasons name the target) → `OwnerRollback` experience → one `Restoration` trait change per trait whose value changed, each with `rule = owner-rollback`, `rollback_target_id` and the experience. A rollback that changes nothing is still audited by the first three records.
+- **Nothing is deleted.** Original events, experiences, decisions, trait changes and forget tombstones are untouched; rollback works after the target's experience was forgotten. Runtime state, its clock and `last_interaction_at` do not move; only energy advances with time, as in any step.
+- **Atomic and safe.** The brain is restored from the saved snapshot (no startup step, no `RecoverAfterRestart`, state and its clock unchanged); the whole request is validated before the brain changes; the result is one `StepResult` committed in one transaction. Unknown or invalid targets and incompatible options fail with exit code 1 (`[ERROR] No existe el cambio de rasgo <id>`, or the bounds error), a malformed ID with exit code 2, and neither writes anything. A missing database is never created. Success prints `[ROLLBACK] Personalidad restaurada a antes del cambio <id>; historial conservado, <n> rasgos corregidos.` and one `[TRAIT]` line per restoration.
+- **Budget.** The original learning stays spent (not refunded) and a restoration is not learning (not charged), live or after restart: `Load()` counts only `Learning` rows. See `docs/personality-model.md`.
+- **Scenarios.** A scenario line cannot carry a target, so `osdy events export` refuses a database that contains rollback requests: exit 1, `[ERROR] La base de datos contiene solicitudes de rollback que un escenario no puede reproducir; usá 'osdy export <archivo.json>' para conservar el registro completo.`, empty stdout, no file created or overwritten. Scenario files containing `OwnerRollbackRequested` are rejected. `osdy export` keeps the complete record.
 
 Deletion is logical: it does not promise forensic erasure from SQLite free pages, WAL files, backups or previously written exports. v0.1 stores only simulated, non-personal events; recording policy, correction and further privacy protections remain deferred.
