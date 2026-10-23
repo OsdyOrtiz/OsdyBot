@@ -121,6 +121,36 @@ public sealed class SqliteBrainStoreTests : IDisposable
     }
 
     [Fact]
+    public void Opening_an_empty_file_read_only_finds_no_brain_and_leaves_the_file_untouched()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(DbPath)!);
+        File.WriteAllBytes(DbPath, []);
+
+        var store = SqliteBrainStore.OpenReadOnly(DbPath);
+        SqliteConnection.ClearAllPools();
+
+        Assert.Null(store);
+        Assert.Equal(0, new FileInfo(DbPath).Length);
+        Assert.Equal(["brain.db"], Directory.GetFiles(Path.GetDirectoryName(DbPath)!).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public void A_read_only_store_reads_the_saved_brain_and_refuses_to_write()
+    {
+        StepResult startup;
+        using (var store = new SqliteBrainStore(DbPath))
+        {
+            startup = BrainBootstrap.Boot(store, new BrainOptions(), T0).Startup;
+        }
+
+        using var readOnly = SqliteBrainStore.OpenReadOnly(DbPath)!;
+
+        Assert.Equal(startup.Snapshot.Identity, readOnly.Load()!.Identity);
+        Assert.Equal(new MemoryStats(0, 0, 0, 0), readOnly.GetStats());
+        Assert.Throws<SqliteException>(() => readOnly.Commit(startup));
+    }
+
+    [Fact]
     public void A_newer_schema_version_is_refused_instead_of_being_overwritten()
     {
         // A plain (non-WAL) SQLite file written by some newer version of the app.

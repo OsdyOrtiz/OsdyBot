@@ -181,6 +181,23 @@ public sealed class CliAppTests : IDisposable
     }
 
     [Fact]
+    public async Task Status_and_export_never_write_to_an_empty_database_file()
+    {
+        var empty = Write("empty.db", "");
+
+        var status = await Run("status", "--db", empty);
+        var export = await Run("events", "export", Path.Combine(_directory, "out.txt"), "--db", empty);
+        SqliteConnection.ClearAllPools();
+
+        Assert.Equal((CliApp.Failure, CliApp.Failure), (status.ExitCode, export.ExitCode));
+        Assert.Equal($"[ERROR] No hay ningún cerebro guardado en {empty}", status.Error.TrimEnd());
+        Assert.Equal("[ERROR] No hay eventos guardados para exportar", export.Error.TrimEnd());
+        Assert.Empty(status.Output + export.Output);
+        Assert.Equal(0, new FileInfo(empty).Length);
+        Assert.False(File.Exists(Path.Combine(_directory, "out.txt")));
+    }
+
+    [Fact]
     public async Task A_file_that_is_not_a_database_is_reported_instead_of_crashing()
     {
         var junk = Write("junk.db", "this is not sqlite, just text that is long enough to have a header....");

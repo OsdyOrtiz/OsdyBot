@@ -172,8 +172,8 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
             return Failure;
         }
 
-        using var store = new SqliteBrainStore(command.Database);
-        if (store.Load() is not { } snapshot)
+        using var store = SqliteBrainStore.OpenReadOnly(command.Database);
+        if (store?.Load() is not { } snapshot)
         {
             error.WriteLine($"[ERROR] No hay ningún cerebro guardado en {command.Database}");
             return Failure;
@@ -222,8 +222,8 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
             return Failure;
         }
 
-        using var store = new SqliteBrainStore(command.Database);
-        var events = store.GetEvents();
+        using var store = SqliteBrainStore.OpenReadOnly(command.Database);
+        var events = store?.GetEvents() ?? [];
         if (events.Count == 0)
         {
             error.WriteLine("[ERROR] No hay eventos guardados para exportar");

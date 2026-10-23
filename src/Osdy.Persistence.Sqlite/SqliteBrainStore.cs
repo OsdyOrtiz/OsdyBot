@@ -27,8 +27,7 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
             Directory.CreateDirectory(directory);
         }
 
-        _connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
-        _connection.Open();
+        _connection = Open(path, SqliteOpenMode.ReadWriteCreate);
         try
         {
             Initialize();
@@ -36,6 +35,32 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
         catch
         {
             _connection.Dispose();
+            throw;
+        }
+    }
+
+    private SqliteBrainStore(SqliteConnection connection) => _connection = connection;
+
+    /// <summary>
+    /// Opens an existing file for reading only: nothing is ever written to it, not even a schema. Returns null when
+    /// the file holds no Osdy Brain schema yet (for example, an empty file).
+    /// </summary>
+    public static SqliteBrainStore? OpenReadOnly(string path)
+    {
+        var connection = Open(path, SqliteOpenMode.ReadOnly);
+        try
+        {
+            if (ReadVersion(connection) == 0)
+            {
+                connection.Dispose();
+                return null;
+            }
+
+            return new SqliteBrainStore(connection);
+        }
+        catch
+        {
+            connection.Dispose();
             throw;
         }
     }
@@ -269,14 +294,7 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
     private void Initialize()
     {
         // Check the version before any write (including the journal mode) so a refused file stays untouched.
-        using var versionCommand = Command("PRAGMA user_version;");
-        var version = Convert.ToInt32(versionCommand.ExecuteScalar(), CultureInfo.InvariantCulture);
-        if (version != 0 && version != Schema.Version)
-        {
-            throw new InvalidOperationException(
-                $"Database schema version {version} is not supported (expected {Schema.Version}). Refusing to open it.");
-        }
-
+        var version = ReadVersion(_connection);
         using (var wal = Command("PRAGMA journal_mode = WAL;"))
         {
             wal.ExecuteNonQuery();
@@ -291,6 +309,29 @@ public sealed class SqliteBrainStore : IBrainStore, IDisposable
         Execute(Schema.Create);
         Execute($"PRAGMA user_version = {Schema.Version};");
         transaction.Commit();
+    }
+
+    private static SqliteConnection Open(string path, SqliteOpenMode mode)
+    {
+        var connection = new SqliteConnection(
+            new SqliteConnectionStringBuilder { DataSource = path, Mode = mode, Pooling = false }.ToString());
+        connection.Open();
+        return connection;
+    }
+
+    /// <summary>Returns the schema version (0 when there is no schema yet) or throws when it is not supported.</summary>
+    private static int ReadVersion(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA user_version;";
+        var version = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+        if (version != 0 && version != Schema.Version)
+        {
+            throw new InvalidOperationException(
+                $"Database schema version {version} is not supported (expected {Schema.Version}). Refusing to open it.");
+        }
+
+        return version;
     }
 
     /// <summary>Selects the last <paramref name="count"/> rows by insertion order and returns them oldest first.</summary>

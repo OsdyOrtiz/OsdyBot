@@ -32,6 +32,7 @@ trait_changes (seq INTEGER PRIMARY KEY, id TEXT UNIQUE, occurred_at TEXT, trait 
 - `seq` gives a stable insertion order independent of clock precision.
 - Schema version lives in `PRAGMA user_version`. An unknown newer version refuses to open instead of corrupting data.
 - WAL journal mode for crash safety.
+- Inspection commands (`osdy status`, `osdy events export`) open the file read-only: they never create a schema, change the journal mode or write anything, even to an empty file.
 
 ## Write strategy
 
