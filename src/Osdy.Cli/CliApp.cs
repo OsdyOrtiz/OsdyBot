@@ -89,21 +89,33 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
         var runner = new BrainRunner(boot.Brain, store, renderer, time);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var loop = runner.RunAsync(stop.Token);
+        var reading = ReadKeysAsync(runner, renderer, stop.Token);
 
+        // Whichever ends first (quit key, end of input, Ctrl+C, or the loop giving up) stops the other.
+        await Task.WhenAny(loop, reading).ConfigureAwait(false);
+        await stop.CancelAsync().ConfigureAwait(false);
+        await reading.ConfigureAwait(false);
+        await loop.ConfigureAwait(false);
+        await output.WriteLineAsync("[BRAIN] Detenido. Estado guardado.").ConfigureAwait(false);
+        return Ok;
+    }
+
+    private async Task ReadKeysAsync(BrainRunner runner, ConsoleRenderer renderer, CancellationToken stop)
+    {
         try
         {
             while (!stop.IsCancellationRequested)
             {
-                var line = await input.ReadLineAsync(stop.Token).ConfigureAwait(false);
+                var line = await input.ReadLineAsync(stop).ConfigureAwait(false);
                 if (line is null || line.Trim() == "q")
                 {
-                    break;
+                    return;
                 }
 
                 var key = line.Trim();
                 if (Keys.TryGetValue(key, out var type))
                 {
-                    await runner.PostAsync(type, "console", stop.Token).ConfigureAwait(false);
+                    await runner.PostAsync(type, "console", stop).ConfigureAwait(false);
                 }
                 else if (key == "s")
                 {
@@ -117,13 +129,8 @@ public sealed class CliApp(TextReader input, TextWriter output, TextWriter error
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
-            // Ctrl+C.
+            // Ctrl+C or the loop stopped.
         }
-
-        await stop.CancelAsync().ConfigureAwait(false);
-        await loop.ConfigureAwait(false);
-        await output.WriteLineAsync("[BRAIN] Detenido. Estado guardado.").ConfigureAwait(false);
-        return Ok;
     }
 
     private int Simulate(Arguments command)

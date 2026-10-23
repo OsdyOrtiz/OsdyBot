@@ -91,7 +91,7 @@ console / adapters ──────────┼──▶ Channel<BrainInput
 - The observer only receives steps that produced records (events, decisions, experiences, trait changes).
 - On shutdown, events already posted are still processed, then a final checkpoint is saved.
 - The timer uses the BCL `TimeProvider`, so tests drive it with a fake clock.
-- **Failure handling:** if a step or commit throws, the runner reports it through `IBrainObserver.OnError`, reloads the brain from the last committed snapshot, and continues. After `MaxConsecutiveFailures` (default 5) it stops instead of looping on a broken store.
+- **Failure handling:** if a step or commit throws, the runner reports it through `IBrainObserver.OnError`, reloads the brain from the last committed snapshot, and continues. After `MaxConsecutiveFailures` (default 5) it stops instead of looping on a broken store; `osdy run` then stops reading the keyboard and exits with code 1 and `[ERROR] Brain stopped after 5 consecutive failures.`
 
 ## Startup and restart recovery
 

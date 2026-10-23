@@ -131,6 +131,22 @@ public sealed class CliAppTests : IDisposable
         Assert.Single(boot.Split('\n'), line => line.StartsWith("[STATE]", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task Run_stops_waiting_for_input_when_the_brain_stops_after_repeated_failures()
+    {
+        // An interactive terminal: once its lines are read it blocks until cancelled instead of ending.
+        var input = new InteractiveInput(
+            onFirstRead: () => Sql(Db, "DROP TABLE events;"), // every event commit fails from now on
+            "h", "l", "h", "l", "h");
+
+        var result = await Run(["run", "--db", Db], input);
+
+        Assert.Equal(CliApp.Failure, result.ExitCode);
+        Assert.Equal("[ERROR] Brain stopped after 5 consecutive failures.", result.Error.TrimEnd());
+        Assert.Equal(5, result.Output.Split('\n').Count(l => l.StartsWith("[ERROR] SqliteException", StringComparison.Ordinal)));
+        Assert.DoesNotContain("[BRAIN] Detenido", result.Output, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(new[] { "dance" }, "Comando no válido: dance")]
     [InlineData(new string[0], "Falta el comando.")]
@@ -218,7 +234,9 @@ public sealed class CliAppTests : IDisposable
 
     private Task<CliResult> Run(params string[] args) => Run(args, input: "");
 
-    private async Task<CliResult> Run(string[] args, string input)
+    private Task<CliResult> Run(string[] args, string input) => Run(args, new StringReader(input));
+
+    private async Task<CliResult> Run(string[] args, TextReader input)
     {
         var output = new StringWriter();
         var error = new StringWriter();
@@ -226,7 +244,7 @@ public sealed class CliAppTests : IDisposable
         Environment.CurrentDirectory = _directory; // keeps the default database path inside the temp folder
         try
         {
-            var app = new CliApp(new StringReader(input), TextWriter.Synchronized(output), TextWriter.Synchronized(error), new FakeTimeProvider(T0));
+            var app = new CliApp(input, TextWriter.Synchronized(output), TextWriter.Synchronized(error), new FakeTimeProvider(T0));
             var code = await app.RunAsync(args, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30));
             return new CliResult(code, output.ToString(), error.ToString());
         }
@@ -256,6 +274,38 @@ public sealed class CliAppTests : IDisposable
             var index = output.IndexOf(fragment, position, StringComparison.Ordinal);
             Assert.True(index >= 0, $"Missing (in order) '{fragment}' in:\n{output}");
             position = index + fragment.Length;
+        }
+    }
+
+    private static void Sql(string database, string sql)
+    {
+        using var connection = new SqliteConnection($"Data Source={database};Pooling=False");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.ExecuteNonQuery();
+    }
+
+    private sealed class InteractiveInput(Action onFirstRead, params string[] lines) : TextReader
+    {
+        private readonly Queue<string> _lines = new(lines);
+        private bool _started;
+
+        public override async ValueTask<string?> ReadLineAsync(CancellationToken cancellationToken)
+        {
+            if (!_started)
+            {
+                _started = true;
+                onFirstRead();
+            }
+
+            if (_lines.TryDequeue(out var line))
+            {
+                return line;
+            }
+
+            await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+            return null;
         }
     }
 

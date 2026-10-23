@@ -39,7 +39,7 @@ Assumption A1: user-facing console tags stay as in the example; technical artifa
 | T7 | S12, L5 | inline | done — RED: 2 `[STATE]` lines at boot; GREEN 14/14 CLI | see git log `fix(cli)` |
 | T8 | S11, L5 | inline | done — RED: rule `novelty` instead of custom; GREEN 91/91 core | see git log `fix(core)` |
 | T9 | S8, L5 | inline | done — RED: CS0117 + empty file grew to 65 536 bytes; GREEN 113/113 | see git log `fix(persistence)` |
-| T10 | S5, L5 | inline | pending — `run` stops reading input when the loop stops after repeated failures | |
+| T10 | S5, L5 | inline | done — RED: hang until the 30 s guard; GREEN 16/16 CLI, stable 10×, real binary run exit 0 | see git log `fix(cli)` |
 | T11 | S6, L5 | inline | pending — `events export` keeps trailing waits and sub-second offsets | |
 | T12 | S6, S10, L5 | inline | pending — timestamps never go backwards (needs a decision) | |
 
