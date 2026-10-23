@@ -1,0 +1,9 @@
+# First meeting: someone approaches, plays a little, leaves; later something new appears.
+# Format: <HH:MM:SS or D.HH:MM:SS offset from start, optionally .fff> <EventType | wait>
+00:00:05 HumanPresenceDetected
+00:00:10 HumanInteractionDetected
+00:00:20 PositiveInteraction
+00:00:40 PositiveInteraction
+00:01:00 InteractionEnded
+00:03:00 NoveltyDetected
+00:10:00 wait
