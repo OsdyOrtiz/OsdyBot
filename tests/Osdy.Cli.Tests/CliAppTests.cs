@@ -113,6 +113,24 @@ public sealed class CliAppTests : IDisposable
         Assert.Contains("[STATE] Interacting", status.Output, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Boot_after_restart_recovery_prints_the_resumed_state_once()
+    {
+        await Run(["run", "--db", Db], input: "h\nq\n");
+
+        var restart = await Run(["run", "--db", Db], input: "q\n");
+
+        var boot = restart.Output[..restart.Output.IndexOf("Teclas:", StringComparison.Ordinal)];
+        AssertInOrder(boot,
+            "[IDENTITY] Identidad cargada: Osdy",
+            "[DECISION] RecoverAfterRestart (restart-recovery)",
+            "[REASON] State Interacting is transient; resuming as Idle",
+            "[STATE] Idle",
+            "[ENERGY] ",
+            "[TRAIT] Curiosity: ");
+        Assert.Single(boot.Split('\n'), line => line.StartsWith("[STATE]", StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData(new[] { "dance" }, "Comando no válido: dance")]
     [InlineData(new string[0], "Falta el comando.")]

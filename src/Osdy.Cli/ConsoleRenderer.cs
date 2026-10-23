@@ -20,17 +20,25 @@ public sealed class ConsoleRenderer(TextWriter output, Func<DateTimeOffset, stri
             : $"[IDENTITY] Identidad cargada: {identity.Name} ({identity.Id}, creada {identity.CreatedAt.ToString("u", Invariant)})");
         output.WriteLine($"[MEMORY] Experiencias recuperadas: {stats.Experiences} (eventos {stats.Events}, decisiones {stats.Decisions}, cambios de rasgos {stats.TraitChanges})");
 
+        var stateWritten = false;
         if (boot.Startup.Decision is { } decision)
         {
             WriteDecision(decision);
+            stateWritten = decision.ChangesState;
         }
 
-        WriteSnapshot(boot.Brain.Snapshot);
+        WriteSnapshot(boot.Brain.Snapshot, includeState: !stateWritten);
     }
 
-    public void WriteSnapshot(BrainSnapshot snapshot)
+    public void WriteSnapshot(BrainSnapshot snapshot) => WriteSnapshot(snapshot, includeState: true);
+
+    private void WriteSnapshot(BrainSnapshot snapshot, bool includeState)
     {
-        output.WriteLine($"[STATE] {snapshot.Runtime.State}");
+        if (includeState)
+        {
+            output.WriteLine($"[STATE] {snapshot.Runtime.State}");
+        }
+
         output.WriteLine($"[ENERGY] {N(snapshot.Runtime.Energy)}");
         foreach (var trait in snapshot.Personality.Traits)
         {

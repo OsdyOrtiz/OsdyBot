@@ -36,6 +36,13 @@ Assumption A1: user-facing console tags stay as in the example; technical artifa
 | T5 | S5, S6, S12, S14, S15 | inline | done — RED: CLI tests written after code (not observed); found + fixed 2 defects during functional run (Investigate did not re-enter Curious; shutdown dropped queued events); GREEN 106/106; runner tests 15× and CLI tests 10× stable; real binary run verified | 91386ec |
 | T6 | all | delegated verifier (feature end) | done — 106/106; S1–S8, S10–S15 PASS, S9 PARTIAL (1 blocker: budget window documented as rolling but fixed → docs corrected to the real guarantee ≤ 2× budget at a boundary, worst-case test added, P8 opened); advisories 1–2 fixed with RED→GREEN tests; advisories 3–9 deferred; GREEN 108/108 | `fix:` correction commit |
 
+| T7 | S12, L5 | inline | done — RED: 2 `[STATE]` lines at boot; GREEN 14/14 CLI | see git log `fix(cli)` |
+| T8 | S11, L5 | inline | pending — Reload drops a custom DecisionEngine | |
+| T9 | S8, L5 | inline | pending — status/export open the DB read-only (an empty file gets a schema) | |
+| T10 | S5, L5 | inline | pending — `run` stops reading input when the loop stops after repeated failures | |
+| T11 | S6, L5 | inline | pending — `events export` keeps trailing waits and sub-second offsets | |
+| T12 | S6, S10, L5 | inline | pending — timestamps never go backwards (needs a decision) | |
+
 Route evidence: no Writer trigger (single sequential stream, no parallel disjoint units); parent writes inline. T6 is an independent verifier because the runner adds async ordering (Risk item 4).
 
 ## Log
@@ -46,3 +53,4 @@ Route evidence: no Writer trigger (single sequential stream, no parallel disjoin
 - L4 (2026-10-23): independent verifier report — blocker: fixed budget window vs "rolling" claim (burst at boundary moved Confidence 0.058 in ~3.5 min). Decision: v0.1 keeps the fixed window and documents the exact bound (≤ 2 × BudgetPerWindow in any short span); sliding window deferred as P8. Fixed advisories: schema guard modified refused files (WAL before version check); CLI crashed on non-SQLite files (DbException not caught).
 - L5: Deferred advisories for v0.2 backlog: status/export should open the DB read-only (an empty file gets a schema); `run` should stop reading input when the loop stops after repeated failures; timestamps can go backwards (event stamped at post vs tick at processing; simulate --db then run); `events export` drops trailing waits and sub-second offsets; Reload drops a custom DecisionEngine; boot after recovery prints `[STATE] Idle` twice.
 - L6: Next step — user review of the planning docs and v0.1; push/PR is the user's decision.
+- L7 (2026-10-23, user, verbatim): "ok podemos seguir" → chose "A: arreglar las deudas de v0.1" (the six L5 advisories) as T7–T12, one commit each.
